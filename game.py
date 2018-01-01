@@ -1,9 +1,9 @@
 import numpy as np
 from numpy import random as npr
-import random
+import random,sys
 import itertools
-import tensorflow as tf
 from collections import namedtuple
+import torch
 
 import model
 
@@ -51,7 +51,7 @@ class Card():
         self.resource = res
         self.cost = cost
     def to_features(self):
-        return np.concatenate([ [self.points], one_hot(self.resource), self.cost])
+        return np.concatenate([ [self.points], one_hot(self.resource,6), self.cost])
     def cost_6(self):
         a = np.zeros(6)
         a[0:5] = self.cost
@@ -87,12 +87,12 @@ Order is same as above (10-5-12-1)
 class Player(object):
     def __init__(self,idx,game):
         self.game = game
-        self.index = idx
+        self.pid = idx
         self.coins = np.zeros(6) # resource values
         self.cards = np.zeros(5) # resource values
         self.points = 0
         self.reserves = []
-        self.act_history = []
+        self.history = []
 
     def action_is_valid_for_player(self,action):
         # if buying a card:
@@ -121,7 +121,7 @@ class Player(object):
 
     # Returns any change that should be made to game's bank
     def execute_action_for_player(self,action):
-        dbank = None
+        dbank = np.zeros(6)
         if action.type == 'card':
             # 1. subtract coins needed to buy it
             card = self.game.cards[action.card_id]
@@ -142,10 +142,119 @@ class Player(object):
             self.coins += action.coins
             dbank = -action.coins
         elif action.type == 'reserve':
-            card = self.game.card[action.card_id]
+            dbank = np.zeros(6)
+            card = self.game.cards[action.card_id]
             self.reserves.append(card)
             self.coins[-1] += 1
         return dbank
+
+    def find_action_with_model(self, game, model):
+
+        # 2. Find which cards we can pickup
+        ok_cards_ids = [kv[0] for kv in game.cards.items() if game.action_is_valid_for_game(
+                    self.pid, Action(type='card',card_id=kv[0],coins=-1))]
+        ok_cards_feats = [kv[1].to_features() for kv in game.cards.items() if game.action_is_valid_for_game(
+                    self.pid, Action(type='card',card_id=kv[0],coins=-1))]
+
+        def decode_act_id(act_id):
+            if act_id < 10:
+                act = Action('coins', card_id=-1, coins=(COIN_PICKUPS[act_id]))
+            elif act_id < 15:
+                act = Action('coins', card_id=-1, coins=one_hot(act_id-10,6)*2)
+            elif act_id < 16:
+                act = Action('reserve', card_id=(np.random.randint(3),np.random.randint(3)),coins=-1)
+            else:
+                card_id = ok_cards_ids[act_id-16]
+                act = Action('card', card_id=card_id, coins=-1)
+            return act
+
+        # 3. Compute scores
+        gst = game.to_features()[0]
+        #score_idx = model(gst, ok_cards_feats)
+        scores = model(gst, ok_cards_feats)
+        nscores = scores.data.numpy()[0]
+
+        # 4. Find act
+        ' According to our policy type, we could choose highest-scoring (test) '
+        ' or sample from the softmax (train), or a more elaborate scheme, like epsilon-greedy'
+        '''
+        taken_act = None
+        taken_act_id = None
+        for (scores,act_id) in score_idx:
+            act = decode_act_id(act_id)
+            print("trying %d -> %s"%(act_id,str(act)))
+            if game.action_is_valid_for_game(self.pid, act):
+                taken_act = act
+                taken_act_id = act_id
+                break
+
+        if not taken_act:
+            print("Game", str(game))
+            raise Exception("Failed to find good action")
+        '''
+
+        ''' SAMPLE '''
+        trials = 0
+        act,act_id = None,None
+        while act is None or not game.action_is_valid_for_game(self.pid,act):
+            act_id = int(np.random.choice(range(len(nscores)),1,p=nscores)[0])
+            #print("test",act_id)
+            act = decode_act_id(act_id)
+            trials += 1
+            if trials >= 300:
+                print(nscores)
+                print(" BAD: performing a noop!")
+                self.history.append('noop')
+                return Action('noop',0,0)
+
+        ''' EPSILON-GREEDY '''
+        # TODO
+        '''
+        trials = 0
+        eps = np.random.random()
+        act,act_id = None,None
+        if eps < .1:
+            act_id = 123
+        '''
+
+        # 5. Store in history
+        #self.history.append( (score_idx,act_id) )
+        self.history.append( (scores,act_id) )
+
+        return act
+
+    ' Apply xent loss to each entry in history to raise/lower prob of selection again '
+    ' We modify based on the action we chose '
+    # xent to dis/encourage same action being chosen again
+    def apply_reward(self, model, did_win):
+        for t,ev in enumerate(self.history):
+            if ev == 'noop':
+                pass
+            else:
+                score_var,act_id = ev
+
+                if did_win:
+                    #norm1 = sum((torch.norm(p) for p in model.parameters())).data[0]
+                    model.zero_grad()
+                    #print("Encouraging",act_id)
+                    target = torch.autograd.Variable(torch.LongTensor([act_id]),requires_grad=False)
+                    loss = torch.nn.functional.cross_entropy(score_var, target)
+                    loss.backward() # TODO: do I need retain graph?
+                    model.opt.step()
+                    #norm2 = sum((torch.norm(p) for p in model.parameters())).data[0]
+                    #print("Optim time ",t," before norm ", norm1, " after ",norm2)
+                else:
+                    model.zero_grad()
+                    ' A strong regularizer may help us avoid mode collapse to one action '
+                    loss = sum(torch.nn.functional.mse_loss(p,torch.autograd.Variable(torch.zeros(p.size()))) for p in model.parameters()) * 2
+                    loss.backward()
+                    model.opt.step()
+                    # target = np.ones(len(score_var)) / len(score_var)
+
+
+
+            
+
 
     def to_features(self):
         return np.concatenate([self.coins,self.cards,[self.points]])
@@ -169,10 +278,13 @@ class Game(object):
         self.bank[-1] = 5 # gold
         self.cards = {}
         self.init_cards()
+
+        self.model = model.Net()
         #self.net = SplendorModel()
 
         self.json_history = [] # for fallback
         self.step_history = [] # for training
+        self.entropy_log = []
 
     ''' Game Logic '''
 
@@ -187,6 +299,9 @@ class Game(object):
         # if reserve:
             # 2. card exists
             # 3. at least one gold chip
+        if action.type == 'noop':
+            return True
+
         if not self.players[player_turn].action_is_valid_for_player(action):
             return False
         if action.type == 'card':
@@ -200,8 +315,8 @@ class Game(object):
         elif action.type == 'reserve':
             return self.bank[-1] >= 1 and self.cards[action.card_id] != None
 
-    def execute_action_for_game(self,player_turn,action):
-        print("Executing action " + str(action))
+    def execute_action_for_game(self,player_turn,action,log=True):
+        if log: print("Executing action " + str(action))
         # 1. execute for player, get dbank & apply
         dbank = self.players[player_turn].execute_action_for_player(action)
         self.bank += dbank
@@ -239,6 +354,15 @@ class Game(object):
         pass
     def from_json(self,jobj):
         pass
+
+    def reset(self):
+        self.num_players = 4
+        self.active_player = 0
+        self.players = [Player(i,self) for i in range(self.num_players)]
+        self.bank = np.ones(6)*7
+        self.bank[-1] = 5 # gold
+        self.cards = {}
+        self.init_cards()
 
 
     ''' AI '''
@@ -279,8 +403,42 @@ class Game(object):
             return ('in-progress',)
 
 
-    def play_entire_game_ai(self):
-        pass
+    def play_many_games_ai(self, games=500):
+        for game in range(games):
+            self.model.zero_grad()
+            ret = self.play_entire_game_ai(log=False)
+            if ret != 'draw':
+                winner,turns = ret
+                norm2 = sum((torch.norm(p) for p in self.model.parameters())).data[0]
+                print("game ",game,"(",turns," turns) norm after ",norm2)
+            self.reset()
+
+
+    def play_entire_game_ai(self,log=True):
+        for turn in range(200):
+            if log:
+                print("\nTURN",turn,)
+                print(str(self),"\n")
+            for pid in range(4):
+                self.active_player = pid
+                act = self.players[pid].find_action_with_model(self,self.model)
+
+                self.execute_action_for_game(pid, act,log=log)
+
+                status = self.game_status()
+                if status[0] == 'won':
+                    if log:
+                        print('Player %d won on turn %d !!!!!'%(status[1],turn))
+                        print("Optimizing ...")
+
+                    self.players[status[1]].apply_reward(self.model, did_win=True)
+                    for i in range(self.num_players):
+                        if status[1] != i:
+                            self.players[i].apply_reward(self.model, did_win=False)
+
+
+                    return status[1], turn
+        return 'draw'
 
 
     # let the AI make a choice and follow it
@@ -304,9 +462,9 @@ class Game(object):
             act_id = yy.argmax()
             yy[act_id] = -1
             if act_id < 10:
-                act = Action('coin', card_id=-1, coins=one_hot(COIN_PICKUPS[act_id]))
+                act = Action('coins', card_id=-1, coins=one_hot(COIN_PICKUPS[act_id]))
             elif act_id < 15:
-                act = Action('coin', card_id=-1, coins=one_hot(act_id-10)*2)
+                act = Action('coins', card_id=-1, coins=one_hot(act_id-10)*2)
             else:
                 card_id = cards[act_id-15]
                 act = Action('card', card_id=card_id, coins=-1)
@@ -333,3 +491,10 @@ class Game(object):
     def __str__(self):
         return "Game bank=%s, cards=%d"%(str(self.bank), len([it for it in self.cards.items() if it[1] != None]))
 
+
+def run_many_games():
+    g = Game()
+    g.play_many_games_ai(50000)
+
+if __name__=='__main__' and 'train' in sys.argv:
+    run_many_games()

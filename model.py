@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.autograd as ag
 import torch.nn.functional as F
 
-import game
+#import game
 
 def one_hot(i,size=5):
     a = np.zeros(size)
@@ -36,8 +36,8 @@ class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
 
-        num_coin_pickups = 10+5 # 5 choose 3 + 5
-        gst_size = 6+44+1
+        num_coin_pickups = 10+5+1 # 5 choose 3 + 5 + 1gold
+        gst_size = 6+44+1 + 3
         cst_size = 6+5+1
 
         hg_sizes = [100, 90]
@@ -49,10 +49,12 @@ class Net(nn.Module):
 
         self.hc1 = nn.Linear(cst_size, hc_size)
         
-        ' We will concatenate the game_state and card_state '
+        ' We will concatenate the game_state and exactly 1 card_state '
         self.card_scoring = nn.Linear (self.hg2.out_features + self.hc1.out_features, 1)
 
         self.final_softmax = nn.Softmax()
+
+        self.opt = torch.optim.SGD(self.parameters(), lr=.01)
 
 
     ' The part to only run once '
@@ -74,30 +76,43 @@ class Net(nn.Module):
 
     ' Return softmax over all possible actions '
     def forward(self, gst,csts):
-        gst_partial,coin_scores = self.gst_forward(gst)
-        card_scores = [self.cst_forward(gst_partial, cst) for cst in csts]
-        card_scores = torch.cat(card_scores)
+        if type(gst)==np.ndarray:
+            gst = ag.Variable(torch.Tensor(gst), requires_grad=False)
+            csts = [ag.Variable(torch.Tensor(cst), requires_grad=False) for cst in csts]
 
-        scores = torch.cat([coin_scores, card_scores])
+        gst_partial,coin_scores = self.gst_forward(gst)
+        if len(csts) > 0:
+            card_scores = [self.cst_forward(gst_partial, cst) for cst in csts]
+            card_scores = torch.cat(card_scores)
+            scores = torch.cat([coin_scores, card_scores])
+        else:
+            scores = coin_scores
         scores = scores.expand([1,len(scores)])
         scores = self.final_softmax(scores)
-        return scores.resize(scores.size()[1])
 
-test_gst,test_cst = np.random.random(51),[np.random.random(12) for _ in range(6)]
+        #scores = scores.resize(scores.size()[1])
+        #return list(sorted([(act,idx) for (idx,act) in enumerate(scores)], key=lambda ai:ai[0].data[0]))
+        #return list([(act,idx) for (idx,act) in enumerate(scores)], key=lambda ai:ai[0].data[0])
+        return scores
+
+
+test_gst,test_cst = np.random.random(54),[np.random.random(12) for _ in range(6)]
 tgst,tcsts = ag.Variable(torch.Tensor(test_gst)),[ag.Variable(torch.Tensor(arr)) for arr in test_cst]
 
 
+'''
 class SplendorModel(object):
     def __init__(self):
         self.output_size = 28
         self.net = Net(self.input_size, self.output_size)
         pass
 
-    # state -> softmax_over_actions
+    ' Returns a sorted list of tuple <score as torch variable, idx> '
     def predict_action(self, game):
         x = game.to_features()
 
         acts = self.net(x)
         acts = sorted([(act,idx) for (idx,act) in enumerate(y)])
 
-        return 
+        return acts
+'''
