@@ -40,17 +40,20 @@ class Net(nn.Module):
         gst_size = 6+44+1 + 3
         cst_size = 6+5+1
 
-        hg_sizes = [100, 90]
-        hc_size = 100
+        hg_sizes = [800, 600, 400, 300]
+        hc_size = 300 # two layers.
 
         self.hg1 = nn.Linear(gst_size, hg_sizes[0])
         self.hg2 = nn.Linear(hg_sizes[0], hg_sizes[1])
-        self.coin_scoring = nn.Linear(self.hg2.out_features, num_coin_pickups)
+        self.hg3 = nn.Linear(hg_sizes[1], hg_sizes[2])
+        self.hg4 = nn.Linear(hg_sizes[2], hg_sizes[3])
+        self.coin_scoring = nn.Linear(self.hg4.out_features, num_coin_pickups)
 
         self.hc1 = nn.Linear(cst_size, hc_size)
+        self.hc2 = nn.Linear(hc_size, hc_size)
         
         ' We will concatenate the game_state and exactly 1 card_state '
-        self.card_scoring = nn.Linear (self.hg2.out_features + self.hc1.out_features, 1)
+        self.card_scoring = nn.Linear (self.hg4.out_features + self.hc2.out_features, 1)
 
         self.final_softmax = nn.Softmax()
 
@@ -60,18 +63,21 @@ class Net(nn.Module):
     ' The part to only run once '
     ' Will return the hidden representation & the unnormalized coin-pickup scores '
     def gst_forward(self, gst):
-        net = F.relu(self.hg1(gst))
-        net = F.relu(self.hg2(net))
-        coin_scores = F.relu(self.coin_scoring(net))
+        net = F.sigmoid(self.hg1(gst))
+        net = F.sigmoid(self.hg2(net))
+        net = F.sigmoid(self.hg3(net))
+        net = F.sigmoid(self.hg4(net))
+        coin_scores = F.sigmoid(self.coin_scoring(net))
         return (net,coin_scores)
 
     ' Run upto 12 times, return score '
     def cst_forward(self, gst_partial, cst):
-        net = F.relu(self.hc1(cst))
+        net = F.sigmoid(self.hc1(cst))
+        net = F.sigmoid(self.hc2(net))
         #net = torch.cat([cst, net])
         net = torch.cat([gst_partial, net])
         #pdb.set_trace()
-        score = F.relu(self.card_scoring(net))
+        score = F.sigmoid(self.card_scoring(net)) * .01
         return score
 
     ' Return softmax over all possible actions '

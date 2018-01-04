@@ -9,9 +9,11 @@ import model
 
 i32 = np.int32
 
+
+
 def one_hot(i,size=5):
     a = np.zeros(size)
-    if type(i) == int:
+    if type(i) == int or type(i)==np.int64:
         a[i] = 1
     else:
         for j in i:
@@ -85,7 +87,7 @@ Order is same as above (10-5-12-1)
 
 
 class Player(object):
-    def __init__(self,idx,game):
+    def __init__(self,idx,game,use_model=None):
         self.game = game
         self.pid = idx
         self.coins = np.zeros(6) # resource values
@@ -93,6 +95,7 @@ class Player(object):
         self.points = 0
         self.reserves = []
         self.history = []
+        self.model = use_model if use_model is not None else model.Net() 
 
     def action_is_valid_for_player(self,action):
         # if buying a card:
@@ -107,7 +110,7 @@ class Player(object):
         if action.type == 'card':
             cost = self.game.cards[action.card_id].cost_6()
             diff = self.coins[0:5]+self.cards - cost[0:5]
-            return all(diff >= 0) or sum(diff[diff<0])+self.coins[-1] >= 0 # or gold can fill in
+            return all(diff >= 0) or -sum(diff[diff<0]) <= self.coins[-1] # or gold can fill in
             #return all([ (self.coins+self.cards)[i] >= cost for i in range(5)])
         elif action.type == 'coins':
             good = sum(self.coins+action.coins) <= 10
@@ -132,8 +135,15 @@ class Player(object):
             self.coins -= cost
             # if any are negative, use gold
             neg_sum = sum(self.coins[self.coins<0])
+            for i,c in enumerate(self.coins):
+                if c < 0: dbank[i] += c
+            dbank[-1] = -neg_sum
+            #print("ns",neg_sum,"for card",str(card.cost),"with coins",str(self.coins))
             self.coins = np.clip(self.coins,0,99)
             self.coins[-1] += neg_sum # use gold
+            #print("ns",neg_sum,"for card",str(card.cost),"with coins",str(self.coins))
+            self.coins = np.clip(self.coins,0,99)
+
             # 2. increment points & cards
             self.points += card.points
             self.cards += one_hot(card.resource)
@@ -148,13 +158,15 @@ class Player(object):
             self.coins[-1] += 1
         return dbank
 
-    def find_action_with_model(self, game, model):
+    def find_action_with_model(self, game):
+        model = self.model
 
         # 2. Find which cards we can pickup
         ok_cards_ids = [kv[0] for kv in game.cards.items() if game.action_is_valid_for_game(
                     self.pid, Action(type='card',card_id=kv[0],coins=-1))]
         ok_cards_feats = [kv[1].to_features() for kv in game.cards.items() if game.action_is_valid_for_game(
                     self.pid, Action(type='card',card_id=kv[0],coins=-1))]
+        #print('# valid cards',len(ok_cards_ids))
 
         def decode_act_id(act_id):
             if act_id < 10:
@@ -166,13 +178,14 @@ class Player(object):
             else:
                 card_id = ok_cards_ids[act_id-16]
                 act = Action('card', card_id=card_id, coins=-1)
+            #print(str(act),act_id)
             return act
 
         # 3. Compute scores
         gst = game.to_features()[0]
         #score_idx = model(gst, ok_cards_feats)
         scores = model(gst, ok_cards_feats)
-        nscores = scores.data.numpy()[0]
+        nscores = np.copy(scores.data.numpy()[0])
 
         # 4. Find act
         ' According to our policy type, we could choose highest-scoring (test) '
@@ -194,6 +207,7 @@ class Player(object):
         '''
 
         ''' SAMPLE '''
+        '''
         trials = 0
         act,act_id = None,None
         while act is None or not game.action_is_valid_for_game(self.pid,act):
@@ -206,19 +220,43 @@ class Player(object):
                 print(" BAD: performing a noop!")
                 self.history.append('noop')
                 return Action('noop',0,0)
+        '''
 
         ''' EPSILON-GREEDY '''
         # TODO
-        '''
-        trials = 0
         eps = np.random.random()
         act,act_id = None,None
-        if eps < .1:
-            act_id = 123
-        '''
+        if eps > .1:
+            # greedy action
+            while act is None or not game.action_is_valid_for_game(self.pid,act):
+                act_id = int(np.argmax(nscores))
+                if nscores[act_id] == -1:
+                    break
+                nscores[act_id] = -1
+                #print("test",act_id)
+                act = decode_act_id(act_id)
+        if act is None or eps <= .100001:
+            # choose random
+            trials = 0
+            act,act_id = None,None
+            while act is None or not game.action_is_valid_for_game(self.pid,act):
+                act_id = int(np.random.choice(range(len(nscores)),1)[0])
+                act = decode_act_id(act_id)
+                trials += 1
+                if trials >= 200:
+                    print(nscores)
+                    print(" BAD: performing a noop!")
+                    self.history.append('noop')
+                    return Action('noop',0,0)
 
         # 5. Store in history
         #self.history.append( (score_idx,act_id) )
+        ' Occasionaly log action distribution '
+        if hash(eps) % 100000 == 0:
+            nnscore = scores.data.numpy()
+            print("Scores on turn",game.turn_number)
+            for i in range(len(nscores)):
+                print(' ',decode_act_id(i),"=>",nnscore[0][i])
         self.history.append( (scores,act_id) )
 
         return act
@@ -226,7 +264,8 @@ class Player(object):
     ' Apply xent loss to each entry in history to raise/lower prob of selection again '
     ' We modify based on the action we chose '
     # xent to dis/encourage same action being chosen again
-    def apply_reward(self, model, did_win):
+    def apply_reward(self, did_win):
+        model = self.model
         for t,ev in enumerate(self.history):
             if ev == 'noop':
                 pass
@@ -246,7 +285,7 @@ class Player(object):
                 else:
                     model.zero_grad()
                     ' A strong regularizer may help us avoid mode collapse to one action '
-                    loss = sum(torch.nn.functional.mse_loss(p,torch.autograd.Variable(torch.zeros(p.size()))) for p in model.parameters()) * 2
+                    loss = sum(torch.nn.functional.mse_loss(p,torch.autograd.Variable(torch.zeros(p.size()))) for p in model.parameters()) * .5
                     loss.backward()
                     model.opt.step()
                     # target = np.ones(len(score_var)) / len(score_var)
@@ -264,7 +303,7 @@ class Player(object):
     def __repr__(self):
         return self.__str__()
     def __str__(self):
-        return "<Player %d, pts=%d, coins=%s, cards=%s>"%(self.index,self.points,
+        return "<Player %d, pts=%d, coins=%s, cards=%s>"%(self.pid,self.points,
                 ' '.join(map(str,self.coins.astype(int))), ' '.join(map(str,self.cards.astype(int))))
 
 
@@ -273,13 +312,15 @@ class Game(object):
     def __init__(self):
         self.num_players = 4
         self.active_player = 0
-        self.players = [Player(i,self) for i in range(self.num_players)]
+        self.model = model.Net()
+        self.players = [Player(i,self,use_model=self.model) for i in range(self.num_players)]
         self.bank = np.ones(6)*7
         self.bank[-1] = 5 # gold
         self.cards = {}
         self.init_cards()
+        self.turn_number = 0
 
-        self.model = model.Net()
+        #self.model = model.Net()
         #self.net = SplendorModel()
 
         self.json_history = [] # for fallback
@@ -304,6 +345,7 @@ class Game(object):
 
         if not self.players[player_turn].action_is_valid_for_player(action):
             return False
+
         if action.type == 'card':
             return self.cards[action.card_id] != None
         elif action.type == 'coins':
@@ -316,7 +358,12 @@ class Game(object):
             return self.bank[-1] >= 1 and self.cards[action.card_id] != None
 
     def execute_action_for_game(self,player_turn,action,log=True):
-        if log: print("Executing action " + str(action))
+        if action.type == 'noop':
+            self.noops_in_row += 1
+            if self.noops_in_row > 10: # error in game, throw it away!
+                return False
+        else:
+            self.noops_in_row = 0
         # 1. execute for player, get dbank & apply
         dbank = self.players[player_turn].execute_action_for_player(action)
         self.bank += dbank
@@ -330,6 +377,10 @@ class Game(object):
             self.cards[action.card_id] = self.next_card(action.card_id[0])
             # 3. decrement gold by one
             self.bank[-1] -= 1
+        if log:
+            print("Executing action " + str(action))
+            print("             ->  " + str(self.players[player_turn]))
+        return True
 
     def next_card(self, lvl):
         template_id = np.random.choice(range(len(LEVEL_TEMPLATES[lvl])),p=LEVEL_PROBABILITIES[lvl])
@@ -346,6 +397,22 @@ class Game(object):
         for lvl in range(3):
             for i in range(4):
                 self.cards[lvl,i] = self.next_card(lvl)
+
+    ' Make sure all coins are in circulation still '
+    def verify_game_valid(self):
+        coins = np.ones(6)*7
+        coins[-1] = 5
+        
+        for p in self.players:
+            coins -= p.coins
+        coins -= self.bank
+
+        if all(coins == 0):
+            return True
+        else:
+            print("ERROR, coins are foobarred, difference: ",str(coins))
+            sys.exit(1)
+            return False
 
 
     ''' Serialization'''
@@ -370,6 +437,7 @@ class Game(object):
     def play_entire_game_random(self):
         turn = 0
         for turn in range(150):
+            self.turn_number = turn
             print("\nTurn %d"%(turn))
             print(self)
             for p in self.players:
@@ -396,7 +464,7 @@ class Game(object):
         return -1
 
     def game_status(self):
-        winners = [pid for (pid,p) in enumerate(self.players) if p.points>=15]
+        winners = [pid for (pid,p) in enumerate(self.players) if p.points>=30]
         if len(winners) > 0:
             return ('won', winners[0])
         else:
@@ -405,25 +473,31 @@ class Game(object):
 
     def play_many_games_ai(self, games=500):
         for game in range(games):
-            self.model.zero_grad()
+            #self.model.zero_grad()
             ret = self.play_entire_game_ai(log=False)
+            #ret = self.play_entire_game_ai(log=True)
             if ret != 'draw':
                 winner,turns = ret
-                norm2 = sum((torch.norm(p) for p in self.model.parameters())).data[0]
+                #norm2 = sum((torch.norm(p) for p in self.model.parameters())).data[0]
+                norm2 = sum(sum((torch.norm(p) for p in pl.model.parameters())).data[0] for pl in self.players)
                 print("game ",game,"(",turns," turns) norm after ",norm2)
             self.reset()
 
 
     def play_entire_game_ai(self,log=True):
         for turn in range(200):
+            self.turn_number = turn
             if log:
                 print("\nTURN",turn,)
                 print(str(self),"\n")
             for pid in range(4):
                 self.active_player = pid
-                act = self.players[pid].find_action_with_model(self,self.model)
+                act = self.players[pid].find_action_with_model(self)
 
-                self.execute_action_for_game(pid, act,log=log)
+                if not self.execute_action_for_game(pid, act,log=log):
+                    return 'draw'
+                # TODO remember this is disabled
+                #self.verify_game_valid()
 
                 status = self.game_status()
                 if status[0] == 'won':
@@ -431,16 +505,19 @@ class Game(object):
                         print('Player %d won on turn %d !!!!!'%(status[1],turn))
                         print("Optimizing ...")
 
-                    self.players[status[1]].apply_reward(self.model, did_win=True)
+                    self.players[status[1]].apply_reward(did_win=True)
+                    '''
                     for i in range(self.num_players):
                         if status[1] != i:
-                            self.players[i].apply_reward(self.model, did_win=False)
+                            self.players[i].apply_reward(did_win=False)
+                    '''
 
 
                     return status[1], turn
         return 'draw'
 
 
+    """
     # let the AI make a choice and follow it
     def step_with_model(self):
         pid = self.active_player
@@ -448,6 +525,7 @@ class Game(object):
         # See which cards can be picked-up
         cards = [kv[1] for kv in self.cards.items() if self.action_is_valid_for_game(pid,
                     Action(type='card',card_id=kv[0],coins=-1))]
+        print('# valid cards',len(cards))
 
         # The ordering of cst is important since we pass no indexing information
         # to our model. We will match card by data and find that way.
@@ -463,6 +541,7 @@ class Game(object):
             yy[act_id] = -1
             if act_id < 10:
                 act = Action('coins', card_id=-1, coins=one_hot(COIN_PICKUPS[act_id]))
+                print(str(act))
             elif act_id < 15:
                 act = Action('coins', card_id=-1, coins=one_hot(act_id-10)*2)
             else:
@@ -474,11 +553,10 @@ class Game(object):
         self.players[pid].act_history.append(act, y)
 
         self.execute_action_for_game(pid, act)
-        self.active_player = (self.active_player+1) % self.num_players
+        self.active_player = (self.active_player+1) % self.num_players"""
 
 
 
-    ''' Util '''
 
     ' Return a 2-tuple of <gst,cst>, see model.py for the definitions '
     def to_features(self, cards=None):
