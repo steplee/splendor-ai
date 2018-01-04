@@ -32,52 +32,104 @@ These are both handed over to our model at decsion time.
  - The final softmax will have variable number of components since we can afford different cards at different times & the bank might not allow something
 '''
 
+use_dropout = False
+use_batchnorm = False
+#use_dropout = True
+
+# Change the non-linearity by setting this
+f = F.relu
+#f = F.sigmoid
+
+'''
+Architecture:
+
+            softmax
+            /     \
+           |       |
+           |     card_scoring
+           |         |
+           |         |
+    coin_scoring    / \
+           |      /     \
+           |    /        |
+           |   |      (hc subnet)    <--- Variable repetitions
+        (hg subnet)
+'''
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
 
         num_coin_pickups = 10+5+1 # 5 choose 3 + 5 + 1gold
-        gst_size = 6+44+1 + 3
+        gst_size = 6+44+1 + 3 + 4
         cst_size = 6+5+1
 
-        hg_sizes = [800, 600, 400, 300]
-        hc_size = 300 # two layers.
+        hg_sizes = [800, 600, 300, 300]
+        hc_sizes = [300, 300, 300]
 
-        self.hg1 = nn.Linear(gst_size, hg_sizes[0])
-        self.hg2 = nn.Linear(hg_sizes[0], hg_sizes[1])
-        self.hg3 = nn.Linear(hg_sizes[1], hg_sizes[2])
-        self.hg4 = nn.Linear(hg_sizes[2], hg_sizes[3])
-        self.coin_scoring = nn.Linear(self.hg4.out_features, num_coin_pickups)
+        # Game state subnet
+        self.hg = []
+        for i in range(len(hg_sizes)):
+            if i == 0:
+                self.hg.append( nn.Linear(gst_size, hg_sizes[0]) )
+            else:
+                self.hg.append( nn.Linear(hg_sizes[i-1], hg_sizes[i]) )
+        self.hg_dropout = nn.Dropout(.25)
+        self.hg_bn = nn.BatchNorm1d(self.hg[-1].out_features, affine=False)
 
-        self.hc1 = nn.Linear(cst_size, hc_size)
-        self.hc2 = nn.Linear(hc_size, hc_size)
+        self.coin_scoring = nn.Linear(self.hg[-1].out_features, num_coin_pickups)
+
+        # Card subnet
+        self.hc = []
+        for i in range(len(hc_sizes)):
+            if i == 0:
+                self.hc.append( nn.Linear(cst_size, hc_sizes[0]) )
+            else:
+                self.hc.append( nn.Linear(hc_sizes[i-1], hc_sizes[i]) )
+        self.hc_dropout = nn.Dropout(.25)
+        self.hc_bn = nn.BatchNorm1d(self.hc[-1].out_features, affine=False)
         
-        ' We will concatenate the game_state and exactly 1 card_state '
-        self.card_scoring = nn.Linear (self.hg4.out_features + self.hc2.out_features, 1)
+        ' We will concatenate the game_state activations and exactly 1 card_state '
+        self.card_scoring = nn.Linear(self.hg[-1].out_features + self.hc[-1].out_features, 1)
 
         self.final_softmax = nn.Softmax()
 
-        self.opt = torch.optim.SGD(self.parameters(), lr=.01)
+        self.opt = torch.optim.SGD(self.parameters(), lr=.002)
+        #self.opt = torch.optim.Adam(self.parameters(), lr=.00051)
 
 
     ' The part to only run once '
     ' Will return the hidden representation & the unnormalized coin-pickup scores '
     def gst_forward(self, gst):
-        net = F.sigmoid(self.hg1(gst))
-        net = F.sigmoid(self.hg2(net))
-        net = F.sigmoid(self.hg3(net))
-        net = F.sigmoid(self.hg4(net))
-        coin_scores = F.sigmoid(self.coin_scoring(net))
+        net = gst
+        for i in range(len(self.hg)):
+            net = f(self.hg[i](net))
+        if use_dropout:
+            net = self.hg_dropout(net)
+        if use_batchnorm:
+            net = net.resize(1,300)
+            net = self.hg_bn(net)
+            net = net.resize(300)
+
+        coin_scores = f(self.coin_scoring(net))
         return (net,coin_scores)
 
     ' Run upto 12 times, return score '
     def cst_forward(self, gst_partial, cst):
-        net = F.sigmoid(self.hc1(cst))
-        net = F.sigmoid(self.hc2(net))
+        net = cst
+        for i in range(len(self.hc)):
+            net = f(self.hc[i](net))
+        if use_dropout:
+            net = self.hc_dropout(net)
+        if use_batchnorm:
+            net = net.resize(1,300)
+            net = self.hc_bn(net)
+            net = net.resize(False)
+
         #net = torch.cat([cst, net])
         net = torch.cat([gst_partial, net])
         #pdb.set_trace()
-        score = F.sigmoid(self.card_scoring(net)) * .01
+        score = f(self.card_scoring(net)) * .01
         return score
 
     ' Return softmax over all possible actions '

@@ -1,13 +1,16 @@
 import numpy as np
 from numpy import random as npr
-import random,sys
-import itertools
+import random,sys,os,time
+import itertools,optparse
 from collections import namedtuple
 import torch
 
 import model
 
-from util import COIN_PICKUPS, 
+from util import COIN_PICKUPS, one_hot, \
+                LEVEL_PROBABILITIES, LEVEL_TEMPLATES
+
+from policies import pg_player as player
 
 
 ''' - -  -  -  -  -  -  CARD  -  -  -  -  -  -  -  -  -  -  '''
@@ -40,7 +43,7 @@ The totality of actions is:
     1  (swap randomly when full 10 coins)
 
 
- =  33 TOTAL
+ =  33 TOTAL (maximum, depending on valid cards)
 So I need a 33-dim softmax output from my model.
 Each component will be normalized prob of selecting action i.
 Order is same as above (10-5-12-1)
@@ -58,25 +61,32 @@ def sample_random_action():
 
 ''' - -  -  -  -  -  -  GAME  -  -  -  -  -  -  -  -  -  -  '''
 
+log_scores = True
+
+optp = optparse.OptionParser()
+optp.add_option('--name', default=str(time.time()).split('.')[0])
+opts = optp.parse_args(sys.argv)[0]
 
 class Game(object):
     def __init__(self):
         self.num_players = 4
         self.active_player = 0
+
+        ' if :use_model is None, each player will create its own, or we can share by having game.model '
         self.model = model.Net()
-        self.players = [Player(i,self,use_model=self.model) for i in range(self.num_players)]
+        self.model.train()
+        self.players = [player.Player(i,self,use_model=self.model) for i in range(self.num_players)]
+        #self.players = [player.Player(i,self,use_model=None) for i in range(self.num_players)]
+
         self.bank = np.ones(6)*7
         self.bank[-1] = 5 # gold
         self.cards = {}
         self.init_cards()
         self.turn_number = 0
 
-        #self.model = model.Net()
-        #self.net = SplendorModel()
-
-        self.json_history = [] # for fallback
-        self.step_history = [] # for training
-        self.entropy_log = []
+        #self.json_history = [] # for fallback
+        #self.step_history = [] # for training
+        #self.entropy_log = []
 
     ''' Game Logic '''
 
@@ -176,43 +186,16 @@ class Game(object):
     def reset(self):
         self.num_players = 4
         self.active_player = 0
-        self.players = [Player(i,self) for i in range(self.num_players)]
+        for p in self.players:
+            p.reset()
         self.bank = np.ones(6)*7
         self.bank[-1] = 5 # gold
         self.cards = {}
         self.init_cards()
 
 
-    ''' AI '''
+    ''' Running the game '''
 
-    def play_entire_game_random(self):
-        turn = 0
-        for turn in range(150):
-            self.turn_number = turn
-            print("\nTurn %d"%(turn))
-            print(self)
-            for p in self.players:
-                print(str(p))
-            for player_id in range(4):
-                status = self.game_status()
-
-                if status[0] == 'won':
-                    print('Player %d won on turn %d !!!!!'%(status[1],turn))
-                    return status[1]
-
-                act = sample_random_action()
-                trials = 0
-                while act!=None and not self.action_is_valid_for_game(player_id, act):
-                    act = sample_random_action()
-                    trials += 1
-                    if trials > 120:
-                        print("ERROR: player %d could not find an action on turn %d. skipping."%(player_id,turn))
-                        act = None
-
-                if act:
-                    self.execute_action_for_game(player_id, act)
-        print("Game played to 150 turns, nobody won, probably error")
-        return -1
 
     def game_status(self):
         winners = [pid for (pid,p) in enumerate(self.players) if p.points>=30]
@@ -222,20 +205,40 @@ class Game(object):
             return ('in-progress',)
 
 
-    def play_many_games_ai(self, games=500):
-        for game in range(games):
-            #self.model.zero_grad()
-            ret = self.play_entire_game_ai(log=False)
-            #ret = self.play_entire_game_ai(log=True)
-            if ret != 'draw':
-                winner,turns = ret
-                #norm2 = sum((torch.norm(p) for p in self.model.parameters())).data[0]
-                norm2 = sum(sum((torch.norm(p) for p in pl.model.parameters())).data[0] for pl in self.players)
-                print("game ",game,"(",turns," turns) norm after ",norm2)
-            self.reset()
+    # Play many games using `play_entire_game()`, reusing the same game py object
+    def play_many_games(self, games=500):
+        with open(os.path.join('logs',opts.name),'w') as logf:
+            self.logf = logf
+            for game in range(games):
+                ret = self.play_entire_game(log=False)
+                if ret != 'draw':
+                    winner,turns = ret
+                    #norm2 = sum((torch.norm(p) for p in self.model.parameters())).data[0]
+                    norm2 = sum(sum((torch.norm(p) for p in pl.model.parameters())).data[0] for pl in self.players)
+                    print("game ",game,"(",turns," turns) norm after ",norm2)
+                    logf.write("game "+str(game)+"( "+str(turns)+" turns) norm after "+str(norm2)+"\n")
+                self.reset()
+
+                if game > 5 and game % 100 == 0: # Eval.
+                    avg = 0
+                    cnt = 10
+                    for egame in range(10):
+                        ret = self.play_entire_game(log=False)
+                        if ret != 'draw':
+                            _,turns = ret
+                            avg += turns
+                        else:
+                            cnt -= 1
+                        self.reset()
+                    print("At game "+str(game)+" average turns: {"+str( (avg/float(cnt)))+"}")
+                    logf.write("At game "+str(game)+" average turns: {"+str( (avg/float(cnt)))+"}\n")
+                    self.model.train(True)
+                if game > 5 and game % 200 == 0: # Save model
+                    torch.save(self.model, os.path.join('saved_models',opts.name))
+            self.logf = None
 
 
-    def play_entire_game_ai(self,log=True):
+    def play_entire_game(self,log=True):
         for turn in range(200):
             self.turn_number = turn
             if log:
@@ -252,9 +255,7 @@ class Game(object):
 
                 status = self.game_status()
                 if status[0] == 'won':
-                    if log:
-                        print('Player %d won on turn %d !!!!!'%(status[1],turn))
-                        print("Optimizing ...")
+                    print('Player %d won on turn %d !!!!!'%(status[1],turn))
 
                     self.players[status[1]].apply_reward(did_win=True)
                     '''
@@ -274,7 +275,8 @@ class Game(object):
             cards = self.cards.values()
         cards = np.concatenate([card.to_features() for card in cards])
         players = np.concatenate([player.to_features() for player in self.players])
-        return np.concatenate([self.bank,players]), cards
+        active_player = one_hot(self.active_player, 4)
+        return np.concatenate([self.bank, players, active_player]), cards
 
     def __str__(self):
         return "Game bank=%s, cards=%d"%(str(self.bank), len([it for it in self.cards.items() if it[1] != None]))
@@ -285,7 +287,7 @@ class Game(object):
 
 def run_many_games():
     g = Game()
-    g.play_many_games_ai(50000)
+    g.play_many_games(50000)
 
 if __name__=='__main__' and 'train' in sys.argv:
     run_many_games()

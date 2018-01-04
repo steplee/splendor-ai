@@ -1,4 +1,5 @@
 import numpy as np
+import itertools
 
 import model
 
@@ -12,6 +13,14 @@ def one_hot(i,size=5):
             a[int(j)] = 1
     return a
 
+def one_neg(i,size=5):
+    a = np.ones(size) * -1
+    if type(i) == int or type(i)==np.int64:
+        a[i] = 1
+    else:
+        for j in i:
+            a[int(j)] = 1
+    return a
 
 
 

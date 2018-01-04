@@ -7,17 +7,29 @@ import torch
 
 import model
 
+from util import COIN_PICKUPS, one_hot, one_neg, LEVEL_PROBABILITIES
+from game import Action
+
+'''
+Direct Policy-Gradient player.
+We do not model V or Q functions, just take game-state to a softmax over actions
+'''
+
 
 class Player(object):
     def __init__(self,idx,game,use_model=None):
         self.game = game
+        self.reset()
         self.pid = idx
+        self.model = use_model if use_model is not None else model.Net() 
+
+    def reset(self):
         self.coins = np.zeros(6) # resource values
         self.cards = np.zeros(5) # resource values
         self.points = 0
         self.reserves = []
         self.history = []
-        self.model = use_model if use_model is not None else model.Net() 
+
 
     def action_is_valid_for_player(self,action):
         # if buying a card:
@@ -92,7 +104,7 @@ class Player(object):
 
         def decode_act_id(act_id):
             if act_id < 10:
-                act = Action('coins', card_id=-1, coins=(util.COIN_PICKUPS[act_id]))
+                act = Action('coins', card_id=-1, coins=(COIN_PICKUPS[act_id]))
             elif act_id < 15:
                 act = Action('coins', card_id=-1, coins=one_hot(act_id-10,6)*2)
             elif act_id < 16:
@@ -128,7 +140,7 @@ class Player(object):
             raise Exception("Failed to find good action")
         '''
 
-        ''' SAMPLE '''
+        ''' WEIGHTED-SAMPLE '''
         '''
         trials = 0
         act,act_id = None,None
@@ -145,7 +157,6 @@ class Player(object):
         '''
 
         ''' EPSILON-GREEDY '''
-        # TODO
         eps = np.random.random()
         act,act_id = None,None
         if eps > .1:
@@ -179,6 +190,8 @@ class Player(object):
             print("Scores on turn",game.turn_number)
             for i in range(len(nscores)):
                 print(' ',decode_act_id(i),"=>",nnscore[0][i])
+                if game.logf:
+                    game.logf.write(' '+str(decode_act_id(i))+"=>"+str(nnscore[0][i])+"\n")
         self.history.append( (scores,act_id) )
 
         return act
@@ -198,19 +211,37 @@ class Player(object):
                     #norm1 = sum((torch.norm(p) for p in model.parameters())).data[0]
                     model.zero_grad()
                     #print("Encouraging",act_id)
-                    target = torch.autograd.Variable(torch.LongTensor([act_id]),requires_grad=False)
-                    loss = torch.nn.functional.cross_entropy(score_var, target)
-                    loss.backward() # TODO: do I need retain graph?
+
+                    # Hinge loss
+                    target = one_neg(act_id, size=score_var.size()[1]).astype(int)
+                    target = torch.autograd.Variable(torch.LongTensor(target),requires_grad=False)
+                    target = target.resize(1,score_var.size()[1])
+                    loss = torch.nn.functional.multilabel_margin_loss(score_var, target) * 2
+
+
+                    # XEnt loss
+                    #target = torch.autograd.Variable(torch.LongTensor([act_id]),requires_grad=False)
+                    #loss = torch.nn.functional.cross_entropy(score_var, target)
+
+                    loss.backward()
                     model.opt.step()
-                    #norm2 = sum((torch.norm(p) for p in model.parameters())).data[0]
-                    #print("Optim time ",t," before norm ", norm1, " after ",norm2)
                 else:
                     model.zero_grad()
                     ' A strong regularizer may help us avoid mode collapse to one action '
-                    loss = sum(torch.nn.functional.mse_loss(p,torch.autograd.Variable(torch.zeros(p.size()))) for p in model.parameters()) * .5
+                    #loss = sum(torch.nn.functional.mse_loss(p,torch.autograd.Variable(torch.zeros(p.size()))) for p in model.parameters()) * .5
+                    #loss.backward()
+                    #model.opt.step()
+
+                    ' Or apply hinge loss to select anything, averaging out bad action '
+                    # Hinge loss
+                    #target = np.ones(score_var.size()[1], dtype=int) / score_var.size()[1]
+                    target = np.ones(score_var.size()[1], dtype=int)
+                    target = torch.autograd.Variable(torch.LongTensor(target),requires_grad=False)
+                    target = target.resize(1,score_var.size()[1])
+                    loss = torch.nn.functional.multilabel_margin_loss(score_var, target) * .1
+
                     loss.backward()
                     model.opt.step()
-                    # target = np.ones(len(score_var)) / len(score_var)
 
 
 
