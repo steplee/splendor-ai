@@ -56,7 +56,7 @@ Architecture:
 '''
 
 class Net(nn.Module):
-    def __init__(self):
+    def __init__(self, lr=.04):
         super(Net, self).__init__()
 
         num_coin_pickups = 10+5+1 # 5 choose 3 + 5 + 1gold
@@ -65,8 +65,8 @@ class Net(nn.Module):
 
         #hg_sizes = [400, 300, 300]
         #hc_sizes = [200, 150, 100]
-        hg_sizes = [300, 200, 100]
-        hc_sizes = [200, 50]
+        hg_sizes = [1000]
+        hc_sizes = [250]
 
         # Game state subnet
         self.hg = []
@@ -103,7 +103,7 @@ class Net(nn.Module):
 
         self.final_softmax = nn.Softmax()
 
-        self.opt = torch.optim.SGD(self.parameters(), lr=.02, weight_decay=.00006)
+        self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.00001)
         #self.opt = torch.optim.Adam(self.parameters(), lr=.00051)
 
 

@@ -65,6 +65,8 @@ log_scores = True
 
 optp = optparse.OptionParser()
 optp.add_option('--name', default=str(time.time()).split('.')[0])
+optp.add_option('--update_losers', action="store_true")
+optp.add_option('--lr', default=.04, type='float')
 opts = optp.parse_args(sys.argv)[0]
 
 class Game(object):
@@ -73,7 +75,7 @@ class Game(object):
         self.active_player = 0
 
         ' if :use_model is None, each player will create its own, or we can share by having game.model '
-        self.model = model.Net()
+        self.model = model.Net(lr=opts.lr)
         self.model.train()
         self.players = [player.Player(i,self,use_model=self.model) for i in range(self.num_players)]
         #self.players = [player.Player(i,self,use_model=None) for i in range(self.num_players)]
@@ -198,7 +200,7 @@ class Game(object):
 
 
     def game_status(self):
-        winners = [pid for (pid,p) in enumerate(self.players) if p.points>=30]
+        winners = [pid for (pid,p) in enumerate(self.players) if p.points>=15]
         if len(winners) > 0:
             return ('won', winners[0])
         else:
@@ -258,11 +260,11 @@ class Game(object):
                     print('Player %d won on turn %d !!!!!'%(status[1],turn))
 
                     self.players[status[1]].apply_reward(did_win=True)
-                    #'''
-                    for i in range(self.num_players):
-                        if status[1] != i:
-                            self.players[i].apply_reward(did_win=False)
-                    #'''
+
+                    if opts.update_losers:
+                        for i in range(self.num_players):
+                            if status[1] != i:
+                                self.players[i].apply_reward(did_win=False)
 
 
                     return status[1], turn

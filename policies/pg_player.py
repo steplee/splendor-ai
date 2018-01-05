@@ -200,10 +200,10 @@ class Player(object):
         return act
 
     ' Apply xent loss to each entry in history to raise/lower prob of selection again '
-    ' We modify based on the action we chose '
     # xent to dis/encourage same action being chosen again
     def apply_reward(self, did_win):
         model = self.model
+
         ' Batched ' 
         scores,acts = [],[]
         model.zero_grad()
@@ -219,10 +219,12 @@ class Player(object):
 
         if did_win:
             target = torch.autograd.Variable(torch.LongTensor(acts),requires_grad=False)
-            loss = torch.nn.functional.cross_entropy(scores, target) * 3.0
+            #loss = torch.nn.functional.cross_entropy(scores, target) * 3.0
+            loss = torch.nn.functional.nll_loss(scores, target) * 3.0
         else:
             target = torch.autograd.Variable(torch.LongTensor(acts),requires_grad=False)
-            loss = -torch.nn.functional.cross_entropy(scores, target)
+            #loss = -torch.nn.functional.cross_entropy(scores, target)
+            loss = -torch.nn.functional.nll_loss(scores, target) * .2
 
         loss.backward()
         model.opt.step()
