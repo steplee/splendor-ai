@@ -15,7 +15,6 @@ Direct Policy-Gradient player.
 We do not model V or Q functions, just take game-state to a softmax over actions
 '''
 
-
 class Player(object):
     def __init__(self,idx,game,use_model=None):
         self.game = game
@@ -96,11 +95,10 @@ class Player(object):
         model = self.model
 
         # 2. Find which cards we can pickup
-        ok_cards_ids = [kv[0] for kv in game.cards.items() if game.action_is_valid_for_game(
-                    self.pid, Action(type='card',card_id=kv[0],coins=-1))]
-        ok_cards_feats = [kv[1].to_features() for kv in game.cards.items() if game.action_is_valid_for_game(
-                    self.pid, Action(type='card',card_id=kv[0],coins=-1))]
-        #print('# valid cards',len(ok_cards_ids))
+        #ok_cards = [kv for kv in game.cards.items() if game.action_is_valid_for_game( self.pid, Action(type='card',card_id=kv[0],coins=-1))]
+        ok_cards = [kv for kv in game.cards.items()]
+        ok_cards_ids = [kv[0] for kv in ok_cards]
+        ok_cards_feats = [kv[1].to_features() for kv in ok_cards]
 
         def decode_act_id(act_id):
             if act_id < 10:
@@ -160,7 +158,7 @@ class Player(object):
         eps = np.random.random()
         act,act_id = None,None
         if eps > .1:
-            # greedy action
+            # greedy action, choose best that is valid
             while act is None or not game.action_is_valid_for_game(self.pid,act):
                 act_id = int(np.argmax(nscores))
                 if nscores[act_id] == -1:
@@ -183,7 +181,7 @@ class Player(object):
                     return Action('noop',0,0)
 
         # 5. Store in history
-        #self.history.append( (score_idx,act_id) )
+        self.history.append( (scores,act_id) )
         ' Occasionaly log action distribution '
         if hash(eps) % 100000 == 0:
             nnscore = scores.data.numpy()
@@ -192,7 +190,6 @@ class Player(object):
                 print(' ',decode_act_id(i),"=>",nnscore[0][i])
                 if game.logf:
                     game.logf.write(' '+str(decode_act_id(i))+"=>"+str(nnscore[0][i])+"\n")
-        self.history.append( (scores,act_id) )
 
         return act
 
@@ -213,15 +210,21 @@ class Player(object):
                     #print("Encouraging",act_id)
 
                     # Hinge loss
-                    target = one_neg(act_id, size=score_var.size()[1]).astype(int)
-                    target = torch.autograd.Variable(torch.LongTensor(target),requires_grad=False)
+                    '''
+                    target = one_hot(act_id, size=score_var.size()[1]).astype(int)
+                    target = torch.autograd.Variable(torch.FloatTensor(target),requires_grad=False)
                     target = target.resize(1,score_var.size()[1])
-                    loss = torch.nn.functional.multilabel_margin_loss(score_var, target) * 2
+                    loss = torch.nn.functional.hinge_embedding_loss(score_var, target) * 2
+                    #target = torch.autograd.Variable(torch.LongTensor([act_id]),requires_grad=False)
+                    #loss = torch.nn.functional.multi_margin_loss(score_var, target) * 2
+                    '''
 
 
                     # XEnt loss
-                    #target = torch.autograd.Variable(torch.LongTensor([act_id]),requires_grad=False)
-                    #loss = torch.nn.functional.cross_entropy(score_var, target)
+                    #'''
+                    target = torch.autograd.Variable(torch.LongTensor([act_id]),requires_grad=False)
+                    loss = torch.nn.functional.cross_entropy(score_var, target)
+                    #'''
 
                     loss.backward()
                     model.opt.step()

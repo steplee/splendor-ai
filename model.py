@@ -33,7 +33,6 @@ These are both handed over to our model at decsion time.
 '''
 
 use_dropout = False
-use_batchnorm = False
 #use_dropout = True
 
 # Change the non-linearity by setting this
@@ -52,7 +51,7 @@ Architecture:
     coin_scoring    / \
            |      /     \
            |    /        |
-           |   |      (hc subnet)    <--- Variable repetitions
+           |   |      (hc subnet)    <--- 12 repetitions
         (hg subnet)
 '''
 
@@ -64,8 +63,8 @@ class Net(nn.Module):
         gst_size = 6+44+1 + 3 + 4
         cst_size = 6+5+1
 
-        hg_sizes = [800, 600, 300, 300]
-        hc_sizes = [300, 300, 300]
+        hg_sizes = [400, 300, 300]
+        hc_sizes = [200, 150, 100]
 
         # Game state subnet
         self.hg = []
@@ -74,10 +73,14 @@ class Net(nn.Module):
                 self.hg.append( nn.Linear(gst_size, hg_sizes[0]) )
             else:
                 self.hg.append( nn.Linear(hg_sizes[i-1], hg_sizes[i]) )
-        self.hg_dropout = nn.Dropout(.25)
-        self.hg_bn = nn.BatchNorm1d(self.hg[-1].out_features, affine=False)
 
-        self.coin_scoring = nn.Linear(self.hg[-1].out_features, num_coin_pickups)
+        if use_dropout:
+            self.hg_dropout = nn.Dropout(.25)
+            self.hg_seq = nn.Sequential( *(self.hg + [self.hc_dropout]) )
+        else:
+            self.hg_seq = nn.Sequential(*self.hg)
+
+        self.coin_scoring = nn.Linear(self.hg_seq[-1].out_features, num_coin_pickups)
 
         # Card subnet
         self.hc = []
@@ -86,45 +89,33 @@ class Net(nn.Module):
                 self.hc.append( nn.Linear(cst_size, hc_sizes[0]) )
             else:
                 self.hc.append( nn.Linear(hc_sizes[i-1], hc_sizes[i]) )
-        self.hc_dropout = nn.Dropout(.25)
-        self.hc_bn = nn.BatchNorm1d(self.hc[-1].out_features, affine=False)
+
+        if use_dropout:
+            self.hc_dropout = nn.Dropout(.25)
+            self.hc_seq = nn.Sequential( *(self.hc + [self.hc_dropout]) )
+        else:
+            self.hc_seq = nn.Sequential(*self.hc)
         
         ' We will concatenate the game_state activations and exactly 1 card_state '
-        self.card_scoring = nn.Linear(self.hg[-1].out_features + self.hc[-1].out_features, 1)
+        self.card_scoring = nn.Linear(self.hg_seq[-1].out_features + self.hc[-1].out_features, 1)
 
         self.final_softmax = nn.Softmax()
 
-        self.opt = torch.optim.SGD(self.parameters(), lr=.002)
+        self.opt = torch.optim.SGD(self.parameters(), lr=.01, weight_decay=.00006)
         #self.opt = torch.optim.Adam(self.parameters(), lr=.00051)
 
 
     ' The part to only run once '
     ' Will return the hidden representation & the unnormalized coin-pickup scores '
     def gst_forward(self, gst):
-        net = gst
-        for i in range(len(self.hg)):
-            net = f(self.hg[i](net))
-        if use_dropout:
-            net = self.hg_dropout(net)
-        if use_batchnorm:
-            net = net.resize(1,300)
-            net = self.hg_bn(net)
-            net = net.resize(300)
+        net = self.hg_seq(gst)
 
         coin_scores = f(self.coin_scoring(net))
         return (net,coin_scores)
 
     ' Run upto 12 times, return score '
     def cst_forward(self, gst_partial, cst):
-        net = cst
-        for i in range(len(self.hc)):
-            net = f(self.hc[i](net))
-        if use_dropout:
-            net = self.hc_dropout(net)
-        if use_batchnorm:
-            net = net.resize(1,300)
-            net = self.hc_bn(net)
-            net = net.resize(False)
+        net = self.hc_seq(cst)
 
         #net = torch.cat([cst, net])
         net = torch.cat([gst_partial, net])
@@ -145,6 +136,7 @@ class Net(nn.Module):
             scores = torch.cat([coin_scores, card_scores])
         else:
             scores = coin_scores
+
         scores = scores.expand([1,len(scores)])
         scores = self.final_softmax(scores)
 
