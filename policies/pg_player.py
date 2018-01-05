@@ -139,11 +139,14 @@ class Player(object):
         '''
 
         ''' WEIGHTED-SAMPLE '''
-        '''
+        #'''
         trials = 0
         act,act_id = None,None
         while act is None or not game.action_is_valid_for_game(self.pid,act):
-            act_id = int(np.random.choice(range(len(nscores)),1,p=nscores)[0])
+            if trials <= 100:
+                act_id = int(np.random.choice(range(len(nscores)),1,p=nscores)[0])
+            else:
+                act_id = int(np.random.choice(range(len(nscores)),1)[0])
             #print("test",act_id)
             act = decode_act_id(act_id)
             trials += 1
@@ -152,12 +155,14 @@ class Player(object):
                 print(" BAD: performing a noop!")
                 self.history.append('noop')
                 return Action('noop',0,0)
-        '''
+        #'''
 
-        ''' EPSILON-GREEDY '''
         eps = np.random.random()
+        ''' EPSILON-GREEDY '''
+        '''
         act,act_id = None,None
-        if eps > .1:
+        #if eps > .76:
+        if eps > .99: # TODO start low, get bigger
             # greedy action, choose best that is valid
             while act is None or not game.action_is_valid_for_game(self.pid,act):
                 act_id = int(np.argmax(nscores))
@@ -179,6 +184,7 @@ class Player(object):
                     print(" BAD: performing a noop!")
                     self.history.append('noop')
                     return Action('noop',0,0)
+        '''
 
         # 5. Store in history
         self.history.append( (scores,act_id) )
@@ -198,6 +204,31 @@ class Player(object):
     # xent to dis/encourage same action being chosen again
     def apply_reward(self, did_win):
         model = self.model
+        ' Batched ' 
+        scores,acts = [],[]
+        model.zero_grad()
+        for t,ev in enumerate(self.history):
+            if ev == 'noop':
+                pass
+            else:
+                score_var,act_id = ev
+                scores.append(score_var)
+                acts.append(act_id)
+
+        scores = torch.cat(scores)
+
+        if did_win:
+            target = torch.autograd.Variable(torch.LongTensor(acts),requires_grad=False)
+            loss = torch.nn.functional.cross_entropy(scores, target) * 3.0
+        else:
+            target = torch.autograd.Variable(torch.LongTensor(acts),requires_grad=False)
+            loss = -torch.nn.functional.cross_entropy(scores, target)
+
+        loss.backward()
+        model.opt.step()
+
+        ' Not Batched '
+        """
         for t,ev in enumerate(self.history):
             if ev == 'noop':
                 pass
@@ -230,6 +261,12 @@ class Player(object):
                     model.opt.step()
                 else:
                     model.zero_grad()
+
+                    # XEnt loss
+                    target = torch.autograd.Variable(torch.LongTensor([act_id]),requires_grad=False)
+                    loss = - torch.nn.functional.cross_entropy(score_var, target)
+
+                    #'''
                     ' A strong regularizer may help us avoid mode collapse to one action '
                     #loss = sum(torch.nn.functional.mse_loss(p,torch.autograd.Variable(torch.zeros(p.size()))) for p in model.parameters()) * .5
                     #loss.backward()
@@ -237,14 +274,17 @@ class Player(object):
 
                     ' Or apply hinge loss to select anything, averaging out bad action '
                     # Hinge loss
+                    '''
                     #target = np.ones(score_var.size()[1], dtype=int) / score_var.size()[1]
                     target = np.ones(score_var.size()[1], dtype=int)
                     target = torch.autograd.Variable(torch.LongTensor(target),requires_grad=False)
                     target = target.resize(1,score_var.size()[1])
                     loss = torch.nn.functional.multilabel_margin_loss(score_var, target) * .1
+                    '''
 
                     loss.backward()
                     model.opt.step()
+        """
 
 
 

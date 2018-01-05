@@ -258,11 +258,11 @@ class Game(object):
                     print('Player %d won on turn %d !!!!!'%(status[1],turn))
 
                     self.players[status[1]].apply_reward(did_win=True)
-                    '''
+                    #'''
                     for i in range(self.num_players):
                         if status[1] != i:
                             self.players[i].apply_reward(did_win=False)
-                    '''
+                    #'''
 
 
                     return status[1], turn

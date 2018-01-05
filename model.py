@@ -63,8 +63,10 @@ class Net(nn.Module):
         gst_size = 6+44+1 + 3 + 4
         cst_size = 6+5+1
 
-        hg_sizes = [400, 300, 300]
-        hc_sizes = [200, 150, 100]
+        #hg_sizes = [400, 300, 300]
+        #hc_sizes = [200, 150, 100]
+        hg_sizes = [300, 200, 100]
+        hc_sizes = [200, 50]
 
         # Game state subnet
         self.hg = []
@@ -101,7 +103,7 @@ class Net(nn.Module):
 
         self.final_softmax = nn.Softmax()
 
-        self.opt = torch.optim.SGD(self.parameters(), lr=.01, weight_decay=.00006)
+        self.opt = torch.optim.SGD(self.parameters(), lr=.02, weight_decay=.00006)
         #self.opt = torch.optim.Adam(self.parameters(), lr=.00051)
 
 
