@@ -1,9 +1,6 @@
 import numpy as np
 import itertools
 
-import model
-
-
 def one_hot(i,size=5):
     a = np.zeros(size)
     if type(i) == int or type(i)==np.int64:

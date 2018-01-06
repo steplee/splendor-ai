@@ -42,17 +42,24 @@ f = F.relu
 '''
 Architecture:
 
-            softmax
+          value approx.
+              |
+              |
+        join all cards+hg
+             ____
             /     \
-           |       |
-           |     card_scoring
+           |       \
+           |        \
            |         |
            |         |
-    coin_scoring    / \
+           |        / \
            |      /     \
            |    /        |
            |   |      (hc subnet)    <--- 12 repetitions
-        (hg subnet)
+        (hg subnet)        |
+            |              |
+            |              |
+        game_state       [card]
 '''
 
 class Net(nn.Module):
@@ -65,8 +72,8 @@ class Net(nn.Module):
 
         #hg_sizes = [400, 300, 300]
         #hc_sizes = [200, 150, 100]
-        hg_sizes = [1000]
-        hc_sizes = [250]
+        hg_sizes = [800,100]
+        hc_sizes = [200, 20]
 
         # Game state subnet
         self.hg = []
@@ -82,8 +89,6 @@ class Net(nn.Module):
         else:
             self.hg_seq = nn.Sequential(*self.hg)
 
-        self.coin_scoring = nn.Linear(self.hg_seq[-1].out_features, num_coin_pickups)
-
         # Card subnet
         self.hc = []
         for i in range(len(hc_sizes)):
@@ -98,10 +103,8 @@ class Net(nn.Module):
         else:
             self.hc_seq = nn.Sequential(*self.hc)
         
-        ' We will concatenate the game_state activations and exactly 1 card_state '
-        self.card_scoring = nn.Linear(self.hg_seq[-1].out_features + self.hc[-1].out_features, 1)
-
-        self.final_softmax = nn.Softmax()
+        ' We will concatenate the game_state activations and all 12 card_states '
+        self.final_scoring = nn.Linear(self.hg_seq[-1].out_features + 12*self.hc[-1].out_features, 1)
 
         self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.00001)
         #self.opt = torch.optim.Adam(self.parameters(), lr=.00051)
@@ -111,60 +114,39 @@ class Net(nn.Module):
     ' Will return the hidden representation & the unnormalized coin-pickup scores '
     def gst_forward(self, gst):
         net = self.hg_seq(gst)
+        return net
 
-        coin_scores = f(self.coin_scoring(net))
-        return (net,coin_scores)
-
-    ' Run upto 12 times, return score '
+    ' Run 12 times, return hidden rep '
     def cst_forward(self, gst_partial, cst):
         net = self.hc_seq(cst)
+        return net
 
-        #net = torch.cat([cst, net])
-        net = torch.cat([gst_partial, net])
-        #pdb.set_trace()
-        score = f(self.card_scoring(net)) * .01
-        return score
-
-    ' Return softmax over all possible actions '
+    ' Return value over single game state '
     def forward(self, gst,csts):
-        if type(gst)==np.ndarray:
+        if type(gst)==np.ndarray or type(gst)==list:
             gst = ag.Variable(torch.Tensor(gst), requires_grad=False)
-            csts = [ag.Variable(torch.Tensor(cst), requires_grad=False) for cst in csts]
+            csts = ag.Variable(torch.FloatTensor(csts), requires_grad=False)
 
-        gst_partial,coin_scores = self.gst_forward(gst)
-        if len(csts) > 0:
-            card_scores = [self.cst_forward(gst_partial, cst) for cst in csts]
-            card_scores = torch.cat(card_scores)
-            scores = torch.cat([coin_scores, card_scores])
-        else:
-            scores = coin_scores
+        gst_partial = self.gst_forward(gst)
 
-        scores = scores.expand([1,len(scores)])
-        scores = self.final_softmax(scores)
+        joined = gst_partial
 
-        #scores = scores.resize(scores.size()[1])
-        #return list(sorted([(act,idx) for (idx,act) in enumerate(scores)], key=lambda ai:ai[0].data[0]))
-        #return list([(act,idx) for (idx,act) in enumerate(scores)], key=lambda ai:ai[0].data[0])
+        #assert(len(csts) == 12)
+
+        # batch x 20
+        #card_reps = [self.cst_forward(gst_partial, cst).view(-1) for cst in csts]
+        #print('cr',card_reps[0].size())
+        #card_reps = [torch.cat([joined[i]]+[card_reps[i]]) for i in range(16)]
+
+        cr = self.cst_forward(gst_partial, csts).view(gst_partial.size()[0],-1)
+        jo = torch.cat([gst_partial,cr], dim=1)
+
+        scores = (self.final_scoring(jo))
+        scores[scores<0] = 0.00000001
+
         return scores
 
 
-test_gst,test_cst = np.random.random(54),[np.random.random(12) for _ in range(6)]
-tgst,tcsts = ag.Variable(torch.Tensor(test_gst)),[ag.Variable(torch.Tensor(arr)) for arr in test_cst]
+#test_gst,test_cst = np.random.random(54),[np.random.random(12) for _ in range(6)]
+#tgst,tcsts = ag.Variable(torch.Tensor(test_gst)),[ag.Variable(torch.Tensor(arr)) for arr in test_cst]
 
-
-'''
-class SplendorModel(object):
-    def __init__(self):
-        self.output_size = 28
-        self.net = Net(self.input_size, self.output_size)
-        pass
-
-    ' Returns a sorted list of tuple <score as torch variable, idx> '
-    def predict_action(self, game):
-        x = game.to_features()
-
-        acts = self.net(x)
-        acts = sorted([(act,idx) for (idx,act) in enumerate(y)])
-
-        return acts
-'''
