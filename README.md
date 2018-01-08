@@ -8,6 +8,7 @@ pytorch based AI to help me win the board game Splendor :)
    - Since this requires simulating the game (in the sense you need to see future states without modifying the game state), I had to dirty-up game.py to do it and should go back and make it nicer.
 
 ## TODO:
+ - [ ] __Do a rewrite of game.py completely imperatively using arrays, no objects!__ (need this for experience replay)
  - [ ] the code got messy when I implemented Value Iteration ... fix it up.
  - [ ] see if I can replicate+parallelize a subnet (you can definiately do it in TF)
  - [ ] automate hyperparam search.
