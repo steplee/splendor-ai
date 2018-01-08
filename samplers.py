@@ -21,8 +21,27 @@ def random_sample(nscores,pid,game):
 
     if not act:
             print(" BAD: performing a noop!")
-            print(nscores)
+            #print(nscores)
             return ('noop', np.argmax(scores), 301)
+
+    return (act, act_id, trials)
+
+def argmax_sample(nscores,pid,game):
+    act,act_id = None,None
+    for trials in range(len(nscores)):
+        cand_id = int(nscores.argmax())
+        cand = Actions[cand_id]
+        if game.action_is_valid_for_game(pid,cand):
+            act_id = cand_id
+            act = cand
+            break
+        else:
+            nscores[cand_id] = 0
+
+    if not act or nscores[act_id] < .0000001:
+            print(" BAD: performing a noop!")
+            #print(nscores)
+            return ('noop', np.argmax(nscores), 301)
 
     return (act, act_id, trials)
 
@@ -44,7 +63,7 @@ def proportional_sample(nscores, game, pid=None):
 
     if not act:
             print(" BAD: performing a noop!")
-            print(nscores)
+            #print(nscores)
             return ('noop', np.argmax(nscores), 301)
 
     return (act, act_id, trials)
@@ -79,7 +98,7 @@ def epsilon_greedy_sample(nscores, pid, Epsilon, game):
             trials += 1
             if trials >= 200:
                 print(" BAD: performing a noop!")
-                print(nscores)
+                #print(nscores)
                 return ('noop', np.argmax(nscores), 301)
 
     return (act, act_id, trials)

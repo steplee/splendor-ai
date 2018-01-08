@@ -36,8 +36,10 @@ use_dropout = False
 #use_dropout = True
 
 # Change the non-linearity by setting this
-f = F.relu
+f,ff = F.relu, torch.nn.ReLU
+#f,ff = F.sigmoid, torch.nn.Sigmoid
 #f = F.sigmoid
+#f = F.tanh
 
 '''
 Architecture:
@@ -72,16 +74,18 @@ class Net(nn.Module):
 
         #hg_sizes = [400, 300, 300]
         #hc_sizes = [200, 150, 100]
-        hg_sizes = [800,100]
-        hc_sizes = [200, 20]
+        hg_sizes = [900,800,600]
+        hc_sizes = [200, 120]
 
         # Game state subnet
         self.hg = []
         for i in range(len(hg_sizes)):
             if i == 0:
                 self.hg.append( nn.Linear(gst_size, hg_sizes[0]) )
+                self.hg.append( ff() )
             else:
                 self.hg.append( nn.Linear(hg_sizes[i-1], hg_sizes[i]) )
+                self.hg.append( ff() )
 
         if use_dropout:
             self.hg_dropout = nn.Dropout(.25)
@@ -94,8 +98,10 @@ class Net(nn.Module):
         for i in range(len(hc_sizes)):
             if i == 0:
                 self.hc.append( nn.Linear(cst_size, hc_sizes[0]) )
+                self.hc.append( ff() )
             else:
                 self.hc.append( nn.Linear(hc_sizes[i-1], hc_sizes[i]) )
+                self.hc.append( ff() )
 
         if use_dropout:
             self.hc_dropout = nn.Dropout(.25)
@@ -104,10 +110,10 @@ class Net(nn.Module):
             self.hc_seq = nn.Sequential(*self.hc)
         
         ' We will concatenate the game_state activations and all 12 card_states '
-        self.final_scoring = nn.Linear(self.hg_seq[-1].out_features + 12*self.hc[-1].out_features, 1)
+        self.final_scoring = nn.Linear(self.hg_seq[-2].out_features + 12*self.hc[-2].out_features, 1)
 
-        self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.00001)
-        #self.opt = torch.optim.Adam(self.parameters(), lr=.00051)
+        #self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.00001)
+        self.opt = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=.00005)
 
 
     ' The part to only run once '
@@ -141,8 +147,10 @@ class Net(nn.Module):
         cr = self.cst_forward(gst_partial, csts).view(gst_partial.size()[0],-1)
         jo = torch.cat([gst_partial,cr], dim=1)
 
-        scores = (self.final_scoring(jo))
-        scores[scores<0] = 0.00000001
+        #scores = F.relu(self.final_scoring(jo))
+        scores = f(self.final_scoring(jo))
+        #scores[scores<0] = 0.00000001
+        scores = torch.clamp(scores, 0.000000001, 10000)
 
         return scores
 

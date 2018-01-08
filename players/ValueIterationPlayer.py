@@ -44,7 +44,7 @@ class Player(BasePlayer.BasePlayer):
         ' We will also collect bad moves and disencourage them '
         self.bad_move_history = []
 
-    def find_action_with_model(self, game):
+    def find_action_with_model(self, game, testing=False):
         model = self.model
 
         #ok_cards = [kv for kv in game.cards.items()]
@@ -110,15 +110,17 @@ class Player(BasePlayer.BasePlayer):
 
 
 
-        #vals = torch.cat(vals)
-        act,act_id,trials = samplers.proportional_sample(probs,game=game,pid=self.pid)
+        if testing:
+            act,act_id,trials = samplers.argmax_sample(probs,game=game,pid=self.pid)
+        else:
+            act,act_id,trials = samplers.proportional_sample(probs,game=game,pid=self.pid)
 
         if act == 'noop':
-            self.history.append( (vals[probs.argmax()],act_id,trials) )
+            #self.history.append( (vals,'noop',trials) )
             return Action('noop',0,0)
 
         ' Only store the chosen action'
-        self.history.append( (vals[act_id],act_id,trials ) )
+        self.history.append( (vals,act_id,trials ) )
 
         ' Occasionaly log action distribution '
         self.maybe_log(vals.data.numpy(),game)
@@ -169,19 +171,33 @@ class Player(BasePlayer.BasePlayer):
         '''
 
         ''' Using interpolated old/new wrt. nearly-constant new'''
-        targets = np.linspace(8 ,10, len(self.history)) if did_win \
-            else  np.linspace(.5,.0001, len(self.history)) # losing doesn't mean initial choices were bad
+        targets = np.linspace(29. ,30, len(self.history)) if did_win \
+            else  np.linspace(.3,.01, len(self.history)) # losing doesn't mean initial choices were bad
 
+        scores = torch.stack(scores)
+        active_scores = scores.gather(1, ag.Variable(torch.LongTensor(acts).view(-1,1),requires_grad=False))
         #active_scores = torch.cat( [sc[act_id] for (sc,act_id) in zip(scores,acts)] )
-        active_scores = torch.cat(scores)
+        #active_scores = torch.cat(scores)
 
-        print("OLDVALS",active_scores.data.numpy())
+        #print("OLDVALS",active_scores.data.numpy())
         #print('TARGETS',targets)
 
         targets = ag.Variable(torch.FloatTensor(targets))
 
 
         loss = torch.nn.functional.mse_loss(active_scores,targets)
+        #loss = torch.nn.functional.l1_loss(active_scores,targets)
+        #loss = torch.add(active_scores,targets,out).norm(1)
+        #loss = torch.nn.functional.soft_margin_loss(active_scores,targets)
+
+        #loss2 = scores.norm(1) * .01
+        #loss2 = torch.nn.functional.mse_loss(scores, ag.Variable(torch.zeros_like(scores.data),requires_grad=False))
+        loss2 = torch.nn.functional.l1_loss(scores, ag.Variable(.1*torch.ones_like(scores.data),requires_grad=False))  * 6
+
+        if did_win:
+            print('Target loss\t',loss.data[0])
+            print('Reg loss  \t',loss2.data[0])
+        loss += loss2
 
         if do_step:
             loss.backward()

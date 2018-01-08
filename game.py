@@ -14,7 +14,8 @@ optp = optparse.OptionParser()
 optp.add_option('--name', default=str(time.time()).split('.')[0])
 optp.add_option('--update_losers', action="store_true")
 optp.add_option('--policy_gradients', action="store_true")
-#optp.add_option('--batch_players', action="store_true")
+optp.add_option('--batch_players', action="store_true")
+optp.add_option('--load_model', action="store_true")
 optp.add_option('--lr', default=.04, type='float')
 opts = optp.parse_args(sys.argv)[0]
 
@@ -48,8 +49,10 @@ class Card():
 Action = namedtuple('Action',['type', 'card_id', 'coins'])
 Actions = [Action('coins', card_id=-1, coins=(COIN_PICKUPS[i])) for i in range(10)] \
         + [Action('coins', card_id=-1, coins=one_hot(i,6)*2) for i in range(5)] \
-        + [Action('reserve', card_id=(np.random.randint(3),np.random.randint(3)),coins=-1)] \
-        + [Action('card', card_id=(i,j), coins=-1) for i in range(3) for j in range(4)]
+        + [Action('reserve', card_id=(np.random.randint(3)*4+np.random.randint(3)),coins=-1)] \
+        + [Action('card', card_id=(i*4+j), coins=-1) for i in range(3) for j in range(4)]
+
+Active_Players = [one_hot(i,size=4) for i in range(4)] # performance opt
 
 '''
 def decode_act_id(act_id):
@@ -66,7 +69,7 @@ def decode_act_id(act_id):
     return act
 '''
 
-'''
+"""
 The totality of actions is:
     10 (pickup 5 choose 3 coins)
     5  (pickup 2 of one coin)
@@ -79,14 +82,14 @@ The totality of actions is:
 So I need a 33-dim softmax output from my model.
 Each component will be normalized prob of selecting action i.
 Order is same as above (10-5-12-1)
-'''
+"""
 
 def sample_random_action():
     if np.random.randint(10) < 7: # coins
         pickup = random.choice(COIN_PICKUPS)
         return Action('coins', card_id=-1, coins=pickup)
     else:
-        return Action('card', card_id=(np.random.randint(3),np.random.randint(3)), coins=-1)
+        return Action('card', card_id=(np.random.randint(3)*4+np.random.randint(3)), coins=-1)
 
 
 
@@ -101,14 +104,20 @@ class Game(object):
         self.active_player = 0
 
         ' use_model must be either type from /models/, or an instance to share amongst players'
-        self.model = Model.Net(lr=opts.lr)
+        if opts.load_model:
+            self.model = torch.load(os.path.join('saved_models',opts.name))
+            #self.model = Model.Net(lr=opts.lr)
+            #self.model.load_state_dict(torch.load(os.path.join('saved_models',opts.name)))
+        else:
+            self.model = Model.Net(lr=opts.lr)
+
         self.model.train()
         self.players = [Player.Player(i,self,use_model=self.model) for i in range(self.num_players)]
         #self.players = [player.Player(i,self,use_model=None) for i in range(self.num_players)]
 
         self.bank = np.ones(6)*7
         self.bank[-1] = 5 # gold
-        self.cards = {}
+        self.cards = []
         self.init_cards()
         self.turn_number = 0
 
@@ -158,12 +167,12 @@ class Game(object):
         self.bank += dbank
         if action.type == 'card':
             # 2. remove card and replace it
-            self.cards[action.card_id] = self.next_card(action.card_id[0])
+            self.cards[action.card_id] = self.next_card(action.card_id//4)
         elif action.type == 'coins':
             pass # do nothing, dbank is all
         elif action.type == 'reserve':
             # 2. replace card
-            self.cards[action.card_id] = self.next_card(action.card_id[0])
+            self.cards[action.card_id] = self.next_card(action.card_id//4)
             # 3. decrement gold by one
             self.bank[-1] -= 1
         if log:
@@ -175,18 +184,18 @@ class Game(object):
     ' Returns same as game.to_features() '
     def simulate_action_for_game(self,player_turn,action,log=False):
         # 1. execute for player, get dbank & apply
-        game_cards = {k:v for (k,v) in self.cards.items()}
+        game_cards = list(self.cards)
         _bank = np.copy(self.bank)
         player_feats,dbank = self.players[player_turn].simulate_action_for_player(action)
         _bank += dbank
         if action.type == 'card':
             # 2. remove card and replace it
-            game_cards[action.card_id] = self.peek_card(action.card_id[0])
+            game_cards[action.card_id] = self.peek_card(action.card_id//4)
         elif action.type == 'coins':
             pass # do nothing, dbank is all
         elif action.type == 'reserve':
             # 2. replace card
-            game_cards[action.card_id] = self.peek_card(action.card_id[0])
+            game_cards[action.card_id] = self.peek_card(action.card_id//4)
             # 3. decrement gold by one
             _bank[-1] -= 1
         if log:
@@ -212,9 +221,10 @@ class Game(object):
         return self.next_card(lvl)
 
     def init_cards(self):
+        self.cards = [None for _ in range(12)]
         for lvl in range(3):
             for i in range(4):
-                self.cards[lvl,i] = self.next_card(lvl)
+                self.cards[lvl*4+i] = self.next_card(lvl)
 
     ' Make sure all coins are in circulation still '
     def verify_game_valid(self):
@@ -247,7 +257,7 @@ class Game(object):
             p.reset()
         self.bank = np.ones(6)*7
         self.bank[-1] = 5 # gold
-        self.cards = {}
+        self.cards = []
         self.init_cards()
 
 
@@ -282,7 +292,7 @@ class Game(object):
                     avg = 0
                     cnt = 10
                     for egame in range(10):
-                        ret = self.play_entire_game(log=False)
+                        ret = self.play_entire_game(log=False,testing=True)
                         if ret != 'draw':
                             _,turns = ret
                             avg += turns
@@ -291,13 +301,13 @@ class Game(object):
                         self.reset()
                     print("At game "+str(game)+" average turns: {"+str( (avg/float(cnt)))+"}")
                     logf.write("At game "+str(game)+" average turns: {"+str( (avg/float(cnt)))+"}\n")
-                    self.model.train(True)
+                    #self.model.train(True)
                 if game > 5 and game % 200 == 0: # Save model
                     torch.save(self.model, os.path.join('saved_models',opts.name))
             self.logf = None
 
 
-    def play_entire_game(self,log=True):
+    def play_entire_game(self,log=True,testing=False):
         for turn in range(200):
             self.turn_number = turn
             if log:
@@ -305,7 +315,7 @@ class Game(object):
                 print(str(self),"\n")
             for pid in range(4):
                 self.active_player = pid
-                act = self.players[pid].find_action_with_model(self)
+                act = self.players[pid].find_action_with_model(self,testing=testing)
 
                 if not self.execute_action_for_game(pid, act,log=log):
                     ' ended in draw :( '
@@ -318,30 +328,30 @@ class Game(object):
 
                 status = self.game_status()
                 if status[0] == 'won':
-                    print('Player %d won on turn %d !!!!!'%(status[1],turn))
-
-
-                     # TODO disabled for now
-
-                    ' If we are model sharing, only take one step per game '
-                    if self.model is not None and False:
-                        loss = self.players[status[1]].apply_reward(did_win=True, do_step=False)
-                        if opts.update_losers:
-                            for i in range(self.num_players):
-                                if status[1] != i:
-                                    loss += self.players[i].apply_reward(did_win=False, do_step=False)
-
-                        loss.backward()
-                        self.model.opt.step()
+                    if testing:
+                        print("Player %d won test"%status[1])
+                        return status[1], turn
                     else:
-                        for i in range(self.num_players):
-                            if status[1] != i and opts.update_losers:
-                                self.players[i].apply_reward(did_win=False, do_step=True)
-                            else:
-                                self.players[status[1]].apply_reward(did_win=True, do_step=True)
+                        ' If we are model sharing, only take one step per game '
+                        if self.model is not None and opts.batch_players==True:
+                            loss = self.players[status[1]].apply_reward(did_win=True, do_step=False)
+                            if opts.update_losers:
+                                for i in range(self.num_players):
+                                    if status[1] != i:
+                                        loss += self.players[i].apply_reward(did_win=False, do_step=False)
+
+                            loss.backward()
+                            self.model.opt.step()
+
+                        else:
+                            for i in range(self.num_players):
+                                if status[1] != i and opts.update_losers:
+                                    self.players[i].apply_reward(did_win=False, do_step=True)
+                                elif status[1] == i:
+                                    self.players[status[1]].apply_reward(did_win=True, do_step=True)
 
 
-                    return status[1], turn
+                        return status[1], turn
         return 'draw'
 
 
@@ -349,22 +359,20 @@ class Game(object):
     # override player features using id
     def to_features(self, bank=None,cards=None, player_feat_id=None,player_feat=None):
         if cards is None:
-            cards = self.cards.values()
+            cards = self.cards
         if type(cards) == dict:
-            cards = ([card.to_features() for card in cards.values()])
+            cards = np.array([card.to_features() for card in cards.values()])
         else:
             cards = ([card.to_features() for card in cards])
         if player_feat_id != None:
             players = np.concatenate([(player.to_features() if player.pid != player_feat_id else player_feat) for player in self.players])
         else:
             players = np.concatenate([(player.to_features()) for player in self.players])
-        active_player = one_hot(self.active_player, 4)
-        if bank is None:
-            bank = self.bank
-        return np.concatenate([bank, players, active_player]), cards
+        active_player = Active_Players[self.active_player]
+        return np.concatenate([self.bank if type(bank)==None else bank, players, active_player]), cards
 
     def __str__(self):
-        return "Game bank=%s, cards=%d"%(str(self.bank), len([it for it in self.cards.items() if it[1] != None]))
+        return "Game bank=%s, cards=%d"%(str(self.bank), len([it for it in self.cards if it != None]))
 
 
 

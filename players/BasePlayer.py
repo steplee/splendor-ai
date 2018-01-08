@@ -30,6 +30,7 @@ class BasePlayer(object):
         self.points = 0
         self.reserves = []
         self.history = []
+        self._feats_cache = None
 
 
     def action_is_valid_for_player(self,action):
@@ -60,6 +61,7 @@ class BasePlayer(object):
     # Returns any change that should be made to game's bank
     def execute_action_for_player(self,action):
         dbank = np.zeros(6)
+        self._feats_cache = None
         if action.type == 'card':
             # 1. subtract coins needed to buy it
             card = self.game.cards[action.card_id]
@@ -133,6 +135,8 @@ class BasePlayer(object):
 
 
     def to_features(self):
+        if self._feats_cache:
+            return self._feats_cache
         return np.concatenate([self.coins,self.cards,[self.points]])
     def cards_6(self):
         return np.concatenate([self.cards,[0]])
@@ -145,7 +149,7 @@ class BasePlayer(object):
 
     def maybe_log(self, scores, game):
         eps = np.random.random()
-        if hash(eps) % 100000 == 0:
+        if hash(eps) % 50000 == 0:
             print("Scores on turn",game.turn_number)
             for i in range(len(scores)):
                 print(' ',Actions[i],"=>",scores[i])
