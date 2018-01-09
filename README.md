@@ -3,26 +3,32 @@
 pytorch based AI to help me win the board game Splendor :)
 
 ### v1.1:
-Completely rewrote flow of the game logic. Instead of having a central game object, we have lightweight game states which are actually controlled by 'actors' (not in the traditional RL sense). They implement an `act` function which takes a state and gives a state. A game runner function in `game_harness.py` interacts with the actor instance to control the game flow and end it when needed.
+Completely rewrote flow of the game logic. Instead of having a central game object, we have lightweight game states which are actually controlled by 'actors'. They implement an `act` function which takes a state and gives a state. A game runner function in `game_harness.py` interacts with the actor instance to control the game flow and end it when needed.
 
-Every game state is chained to the previous one in a `Record` node, which is a linked list ending with the winning state and shared between all players.
+Every game state is chained to the previous one in a `Record` node, which is a linked list ending with the winning state and shared between all players. It is exposed to the actor in `apply_reward`.
 
-Implement different RL techniques by creating new actors. Actors also define how to apply rewards and the loss (which is seperate from the model entirely).
+Implement different RL techniques by creating new actors. Actors also define how to apply rewards and the loss.
 
-Right now, my Value Iteration actor encourages moves along winning paths to be 30.0 and losing paths to be near 0. It applies rewards at the end of every game, although
-an **experience replay** approach would be possible.
+Right now, my Value Iteration actor encourages moves along winning paths to be 30.0 and losing paths to be near 0. It applies rewards at the end of every game, although an **experience replay** approach would be possible.
 
 
+###### Hyperparams
+  - While I still haven't changed the model ...
+     - .0004 seems to big an lr for adam
+     - .001
 
 ## Notes:
   - Since the rewrite, I will need to implement Policy Gradients over again.
+  - 
 
 ## TODO:
+ - [ ] test SGD / Adam, size of nets.
  - [ ] see if I can replicate+parallelize a subnet (you can definiately do it in TF)
  - [ ] automate hyperparam search.
- - [ ] I am wasting time simulating games and not operating on permuatations of players wrt. the game state. I should add permutations of players to the minibatch, since they should not change the choice
+ - [ ] I could permute user and card information and train on same games.
  - [x] profile and optimize using `python-flamegraph`
-     - Most time is spent in pytorch ... which is what I wanted. But I need to rewrite w/ batching
+     - Most time is spent in pytorch ... which is what I wanted.
+     - Still I could batch by game, but it would complicate code a lot.
  - [ ] pit different policied players against eachother, make sure mine can beat random, etc.
  - [ ] build web UI and Flask interface
 

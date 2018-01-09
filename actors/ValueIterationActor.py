@@ -29,8 +29,11 @@ class Actor(object):
         pass
 
     ' Must some state to continue with (eg. next state, random episode from some history...) '
-    def act(self, gstate):
+    def act(self, gstate, model):
         pass
+
+    def maybe_print(self):
+        raise Exception('implement')
 
 '''
 n-step Policy Iteration.
@@ -40,7 +43,7 @@ I should also implement experience replay and see how it effects performance.
 '''
 
 
-class ValueIterationActor(object):
+class ValueIterationActor(Actor):
     def __init__(self):
         # <ag.Variable, action_id, model>
         # We need to store the model in case we have multiple models in one game.
@@ -55,8 +58,8 @@ class ValueIterationActor(object):
 
     ' todo: implement experience replay '
     ' Return (status,record)'
-    def act(self, record, model):
-        next_state,values_var,action_id = self.sample_action_with_model(record.state, model)
+    def act(self, record, model, training=True):
+        next_state,values_var,action_id = self.sample_action_with_model(record.state, model,training)
 
         if type(values_var) == type(None) and action_id == -1:
             return ('fail',-1), None
@@ -67,8 +70,9 @@ class ValueIterationActor(object):
         stat = next_state.game_status()
         rec = Record(record,next_state,values_var,action_id,model,stat,record.state.active_player)
 
-        if np.random.random()>.998 and type(values_var)!=type(None):
-            print('game_state',next_state.arr)
+        if np.random.random()>.999 and type(values_var)!=type(None):
+            #print('game_state',next_state.arr)
+            print('weights norm',sum(torch.norm(p) for p in model.parameters()).data.numpy()[0])
             print('action values',values_var.data.numpy()[:,0])
 
         if stat[0] == 'won':
@@ -80,7 +84,7 @@ class ValueIterationActor(object):
 
 
     ' return <next_state, values_var, act_id> '
-    def sample_action_with_model(self, gstate, model):
+    def sample_action_with_model(self, gstate, model, training=True):
         # Gather future 1-step states
         future_games = gstate.simulate_all_actions(gstate.active_player)
         if all( (fg == None for fg in future_games) ):
@@ -97,14 +101,19 @@ class ValueIterationActor(object):
         values = model(fsts, gsts)
 
         # sample from it
+        good_choices = [i for (i,fgame) in enumerate(future_games) if fgame != None]
         probs = np.copy(values.data.numpy()[:,0])
 
-        good_choices = [i for (i,fgame) in enumerate(future_games) if fgame != None]
-
-        probs = probs[good_choices]
-        probs = probs / sum(probs)
-
-        act_id = np.random.choice(good_choices, p=probs)
+        if training:
+            probs = probs[good_choices]
+            probs = probs / sum(probs)
+            act_id = np.random.choice(good_choices, p=probs)
+        else:
+            good_choices = set(good_choices) # todo optimize...
+            act_id = probs.argmax()
+            while act_id not in good_choices:
+                probs[act_id] = -.01
+                act_id = probs.argmax()
 
         # Save our pytorch Variable, action taken, and model used
         #self.history.append((values, act_id, model))

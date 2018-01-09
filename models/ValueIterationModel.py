@@ -66,7 +66,7 @@ Architecture:
 '''
 
 class Net(nn.Module):
-    def __init__(self, lr=.04):
+    def __init__(self, lr=.04, opt_method='adam'):
         super(Net, self).__init__()
 
         gst_size = 6+52+4
@@ -111,8 +111,10 @@ class Net(nn.Module):
         self.final_scoring = nn.Linear(self.hg_seq[-2].out_features + 12*self.hc[-2].out_features, 1)
         self.final_softmax = nn.Softmax()
 
-        #self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.00001)
-        self.opt = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=.00002)
+        if opt_method == 'sgd':
+            self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.00002)
+        else:
+            self.opt = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=.00002)
 
 
     ' The part to only run once '
