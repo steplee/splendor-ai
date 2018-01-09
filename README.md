@@ -2,6 +2,8 @@
 
 pytorch based AI to help me win the board game Splendor :)
 
+
+
 ## Notes:
  - Policy Iteration is simply not working. Complete mode collapse. I think the game is to complex for the time+params I'm training it with, or you need a very stable initialization+good hyperparams.
  - Instead I am now working on an approach approximating the Value Function and examining all one-step future states (per-player, per-turn) and sampling one to move to. 

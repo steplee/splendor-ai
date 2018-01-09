@@ -26,7 +26,7 @@ class BasePlayer(object):
 
     def reset(self):
         self.coins = np.zeros(6) # resource values
-        self.cards = np.zeros(5) # resource values
+        self.cards = np.zeros(6) # resource values
         self.points = 0
         self.reserves = []
         self.history = []

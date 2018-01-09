@@ -1,5 +1,6 @@
 import numpy as np
 import itertools
+from collections import namedtuple
 
 def one_hot(i,size=5):
     a = np.zeros(size)
@@ -20,6 +21,14 @@ def one_neg(i,size=5):
     return a
 
 
+''' - -  -  -  -  -  -  RECORD  -  -  -  -  -  -  -  -  -  -  '''
+
+Record = namedtuple('record', ['prev','state','values_var','act_id','model','status','pid'])
+
+
+
+
+''' - -  -  -  -  -  -  COINS & CARDS  -  -  -  -  -  -  -  -  -  -  '''
 
 ' The ways to pickup 3 coins, encoded as three-hot vectors '
 COIN_PICKUPS = (itertools.combinations(range(5),3))
@@ -43,3 +52,14 @@ for lvl in range(3):
     for j,t in enumerate(LEVEL_TEMPLATES[lvl]):
         LEVEL_PROBABILITIES[lvl].append( t[0]/row_sum )
 
+
+''' - -  -  -  -  -  -  ACTION  -  -  -  -  -  -  -  -  -  -  '''
+
+#                               str      int       array
+Action = namedtuple('Action',['type', 'card_id', 'coins'])
+Actions = [Action('coins', card_id=-1, coins=(COIN_PICKUPS[i])) for i in range(10)] \
+        + [Action('coins', card_id=-1, coins=one_hot(i,6)*2) for i in range(5)] \
+        + [Action('reserve', card_id=(np.random.randint(3)*4+np.random.randint(3)),coins=-1)] \
+        + [Action('card', card_id=(i*4+j), coins=-1) for i in range(3) for j in range(4)]
+
+Active_Players = [one_hot(i,size=4) for i in range(4)] # performance opt

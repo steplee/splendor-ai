@@ -1,7 +1,6 @@
-from game import Actions
+from util import Actions
 
 import numpy as np
-import game
 
 
 '''
