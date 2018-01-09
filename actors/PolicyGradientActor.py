@@ -14,16 +14,16 @@ import torch.autograd as ag
 
 from actors.BaseActor import BaseActor
 
-
 '''
-n-step Policy Iteration.
+Poliy Gradient Actor.
 
-I will first implement 1-step (which is called Value Iteration).
-I should also implement experience replay and see how it effects performance.
+Direct Softmax over actions, given current state.
+
+TODO: implement experience replay
 '''
 
 
-class ValueIterationActor(BaseActor):
+class PolicyGradientActor(BaseActor):
     def __init__(self, use_model=None, **model_params):
 
         if type(use_model) == type:
@@ -31,17 +31,12 @@ class ValueIterationActor(BaseActor):
         else:
             self.model = use_model
 
-        ''' todo: finish this '''
         self.final_states_not_applied = []
-        # We can randomly sample from this, which maps ints to history triplets, rather than continuing game.
-        self.memory = {}
-        # These are triplets from the history which are ready for a minibatch update.
-        self.finished_games = []
 
     ' todo: implement experience replay '
     ' Return (status,record)'
     def act(self, record, training=True):
-        next_state,values_var,action_id = self.sample_action_with_model(record.state, training)
+        next_state,values_var,action_id = self.sample_action_with_model(record.state, model,training)
 
         if type(values_var) == type(None) and action_id == -1:
             return ('fail',-1), None
@@ -75,18 +70,13 @@ class ValueIterationActor(BaseActor):
 
         # TODO only compute what works, need to un-hardcode 28x batching in the model code
 
-        gsts = [fg.get_game_features() if fg != None else np.zeros(62) for fg in future_games]
-        csts = [fg.get_card_features_as_2d() if fg != None else np.zeros([12,13]) for fg in future_games]
-        fsts,gsts = np.array(gsts), np.array(csts)
-
-        # Evaluate future states with the Value Function.
-        values = self.model(fsts, gsts)
+        # Evaluate a distribution over actions.
+        values = self.model(gstate.get_game_features, gstate.get_card_features())
 
         # sample from it
         good_choices = [i for (i,fgame) in enumerate(future_games) if fgame != None]
         probs = np.copy(values.data.numpy()[:,0])
 
-        ' If training, sample wrt probs. If testing, select max '
         if training:
             probs = probs[good_choices]
             probs = probs / sum(probs)
@@ -98,6 +88,8 @@ class ValueIterationActor(BaseActor):
                 probs[act_id] = -.01
                 act_id = probs.argmax()
 
+        # Save our pytorch Variable, action taken, and model used
+        #self.history.append((values, act_id, model))
 
         return future_games[act_id], values, act_id
 
@@ -136,10 +128,9 @@ class ValueIterationActor(BaseActor):
                 if len(value_vars) == 0 or len(selected_acts) == 0:
                     continue
 
+
                 '''
-                2 approaches for loss:
-                  1. Some distance loss to wanted value function ✔
-                  2. Softmax + xent
+                Loss: Softmax + xent
                 '''
 
                 # XEnt loss
@@ -150,10 +141,11 @@ class ValueIterationActor(BaseActor):
                 #loss = torch.average(loss * weights)
 
 
+
                 # L2 Loss
                 #selected_acts_ids = torch.LongTensor(selected_acts)
                 selected_acts_v = torch.cat([vv[sa] for (vv,sa) in zip(value_vars,selected_acts)])
-                targets = [10.0 if winner==pid else 0.01 for pid in pids]
+                targets = [30.0 if winner==pid else 0.01 for pid in pids]
                 targets = ag.Variable(torch.FloatTensor(targets), requires_grad=False)
                 if loss is None:
                     loss = torch.nn.functional.mse_loss(selected_acts_v, targets, reduce=True)
@@ -162,10 +154,11 @@ class ValueIterationActor(BaseActor):
 
 
             loss.backward()
-            print("stepping with loss:",loss.data[0])
+            print("PG Actor stepping with loss:",loss.data[0])
             self.model.opt.step()
             self.model.zero_grad()
 
             self.final_states_not_applied = []
 
         return True
+
