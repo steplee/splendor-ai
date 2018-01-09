@@ -47,6 +47,7 @@ class ValueIterationActor(object):
         self.history = []
 
         ''' todo: finish this '''
+        self.final_states_not_applied = []
         # We can randomly sample from this, which maps ints to history triplets, rather than continuing game.
         self.memory = {}
         # These are triplets from the history which are ready for a minibatch update.
@@ -57,16 +58,18 @@ class ValueIterationActor(object):
     def act(self, record, model):
         next_state,values_var,action_id = self.sample_action_with_model(record.state, model)
 
+        if type(values_var) == type(None) and action_id == -1:
+            return ('fail',-1), None
+
         if not next_state.verify_game_valid():
             print("Invalid game")
 
         stat = next_state.game_status()
         rec = Record(record,next_state,values_var,action_id,model,stat,record.state.active_player)
 
-        if np.random.random()>.99:
-            print(stat)
-            print(next_state.arr)
-            print([next_state.get_player_points(i) for i in range(4)])
+        if np.random.random()>.998 and type(values_var)!=type(None):
+            print('game_state',next_state.arr)
+            print('action values',values_var.data.numpy()[:,0])
 
         if stat[0] == 'won':
             return stat, rec
@@ -81,7 +84,10 @@ class ValueIterationActor(object):
         # Gather future 1-step states
         future_games = gstate.simulate_all_actions(gstate.active_player)
         if all( (fg == None for fg in future_games) ):
-            return gstate, -1
+            print("all bad")
+            return gstate, None, -1 # return old state
+
+        # TODO only compute what works, need to un-hardcode 28x batching in the model code
 
         gsts = [fg.get_game_features() if fg != None else np.zeros(62) for fg in future_games]
         csts = [fg.get_card_features_as_2d() if fg != None else np.zeros([12,13]) for fg in future_games]
@@ -91,83 +97,86 @@ class ValueIterationActor(object):
         values = model(fsts, gsts)
 
         # sample from it
-        #np_values = values.data.numpy()
         probs = np.copy(values.data.numpy()[:,0])
+
+        good_choices = [i for (i,fgame) in enumerate(future_games) if fgame != None]
+
+        probs = probs[good_choices]
         probs = probs / sum(probs)
 
-        #print(probs)
-
-        act_id = None
-        trials = 0
-        while act_id is None or future_games[act_id] != None and trials < 100:
-            act_id = np.random.choice(range(len(Actions)), p=probs)
-            trials += 1
-
-        if act_id is None or future_games[act_id] is None:
-            choices = [i for (i,fgame) in enumerate(future_games) if fgame != None]
-            if len(choices) == 0:
-                print("NO VALID MOVES!")
-                return gstate, -1
-
-            act_id = np.random.choice(choices)
-            #print('warning, actions were mostly invalid, taking',act_id)
-
-        #for i,p in enumerate(probs):
-            #print(i,'->',p)
-        '''
-        print(sum(probs),'Taking',act_id)
-        print(probs.shape)
-        '''
+        act_id = np.random.choice(good_choices, p=probs)
 
         # Save our pytorch Variable, action taken, and model used
-        self.history.append((values, act_id, model))
+        #self.history.append((values, act_id, model))
 
         return future_games[act_id], values, act_id
 
 
 
     def apply_reward(self, final_record):
-        ' Currently, I am batching per game-ending '
-        winner = final_record.status[1]
-        assert(type(winner) == int and winner>= 0 and winner < 4)
+        if len(self.final_states_not_applied) < 10:
+            self.final_states_not_applied.append(final_record)
+        else:
+            winner = final_record.status[1]
+            assert(type(winner) == int and winner>= 0 and winner < 4)
 
-        models = set()
-        value_vars = []
-        selected_acts = []
-        weights = []
-        pids = []
 
-        record = final_record
-        while record != None and record.prev:
-            value_vars.append(record.values_var)
-            selected_acts.append(record.act_id)
-            weights.append(1.0 if record.state.active_player == winner else -.33)
-            pids.append(record.pid)
-            if record.model not in models:
-                models.add(record.model)
-                record.model.zero_grad()
-            record = record.prev
+            loss = None
 
-        # XEnt loss
-        #targets = ag.Variable(torch.LongTensor(acts), requires_grad=False)
-        #loss = torch.nn.functional(value_vars, targets, reduce=False)
-        ## If we lose the game use the *negative of xent* as objective.
-        #weights = ag.Variable(torch.FloatTensor(weights), requires_grad=False)
-        #loss = torch.average(loss * weights)
+            for record in self.final_states_not_applied:
+                record = final_record
 
-        # L2 Loss
-        #selected_acts_ids = torch.LongTensor(selected_acts)
-        print(len(selected_acts))
-        selected_acts = torch.cat([vv[sa] for (vv,sa) in zip(value_vars,selected_acts)])
-        targets = [30.0 if winner==pid else 0.01 for pid in pids]
-        targets = ag.Variable(torch.FloatTensor(targets), requires_grad=False)
-        loss = torch.nn.functional.mse_loss(selected_acts, targets, reduce=True)
+                ' These all run in reverse, we are following the linked list backward '
+                models = set()
+                value_vars = []
+                selected_acts = []
+                weights = []
+                pids = []
 
-        print("Loss:",loss.data[0])
+                while record != None and record.prev:
+                    assert( record.prev != record ) # loop?!
 
-        loss.backward()
-        for model in models:
-            print("STEPPING")
-            model.opt.step()
+                    if type(record.values_var) != type(None):
+                        value_vars.append(record.values_var)
+                        selected_acts.append(record.act_id)
+                        weights.append(1.0 if record.state.active_player == winner else -.33)
+                        pids.append(record.pid)
+                        if record.model not in models:
+                            models.add(record.model)
+                            record.model.zero_grad()
+                        record = record.prev
 
-        return True
+                '''
+                2 approaches for loss:
+                  1. Some distance loss to wanted value function
+                  2. Softmax + xent
+                '''
+
+                # XEnt loss
+                #targets = ag.Variable(torch.LongTensor(acts), requires_grad=False)
+                #loss = torch.nn.functional(value_vars, targets, reduce=False)
+                ## If we lose the game use the *negative of xent* as objective.
+                #weights = ag.Variable(torch.FloatTensor(weights), requires_grad=False)
+                #loss = torch.average(loss * weights)
+
+
+
+                # L2 Loss
+                #selected_acts_ids = torch.LongTensor(selected_acts)
+                selected_acts_v = torch.cat([vv[sa] for (vv,sa) in zip(value_vars,selected_acts)])
+                targets = [30.0 if winner==pid else 0.01 for pid in pids]
+                targets = ag.Variable(torch.FloatTensor(targets), requires_grad=False)
+                if loss is None:
+                    loss = torch.nn.functional.mse_loss(selected_acts_v, targets, reduce=True)
+                else:
+                    loss += torch.nn.functional.mse_loss(selected_acts_v, targets, reduce=True)
+
+
+            loss.backward()
+            for model in models:
+                print("stepping with loss:",loss.data[0])
+                model.opt.step()
+
+            self.final_states_not_applied = []
+
+            return True

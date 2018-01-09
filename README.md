@@ -2,16 +2,22 @@
 
 pytorch based AI to help me win the board game Splendor :)
 
+### v1.1:
+Completely rewrote flow of the game logic. Instead of having a central game object, we have lightweight game states which are actually controlled by 'actors' (not in the traditional RL sense). They implement an `act` function which takes a state and gives a state. A game runner function in `game_harness.py` interacts with the actor instance to control the game flow and end it when needed.
+
+Every game state is chained to the previous one in a `Record` node, which is a linked list ending with the winning state and shared between all players.
+
+Implement different RL techniques by creating new actors. Actors also define how to apply rewards and the loss (which is seperate from the model entirely).
+
+Right now, my Value Iteration actor encourages moves along winning paths to be 30.0 and losing paths to be near 0. It applies rewards at the end of every game, although
+an **experience replay** approach would be possible.
+
 
 
 ## Notes:
- - Policy Iteration is simply not working. Complete mode collapse. I think the game is to complex for the time+params I'm training it with, or you need a very stable initialization+good hyperparams.
- - Instead I am now working on an approach approximating the Value Function and examining all one-step future states (per-player, per-turn) and sampling one to move to. 
-   - Since this requires simulating the game (in the sense you need to see future states without modifying the game state), I had to dirty-up game.py to do it and should go back and make it nicer.
+  - Since the rewrite, I will need to implement Policy Gradients over again.
 
 ## TODO:
- - [ ] __Do a rewrite of game.py completely imperatively using arrays, no objects!__ (need this for experience replay)
- - [ ] the code got messy when I implemented Value Iteration ... fix it up.
  - [ ] see if I can replicate+parallelize a subnet (you can definiately do it in TF)
  - [ ] automate hyperparam search.
  - [ ] I am wasting time simulating games and not operating on permuatations of players wrt. the game state. I should add permutations of players to the minibatch, since they should not change the choice

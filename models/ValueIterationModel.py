@@ -36,7 +36,8 @@ use_dropout = False
 #use_dropout = True
 
 # Change the non-linearity by setting this
-f,ff = F.relu, torch.nn.ReLU
+#f,ff = F.relu, torch.nn.ReLU
+f,ff = F.leaky_relu, torch.nn.LeakyReLU
 #f,ff = F.sigmoid, torch.nn.Sigmoid
 #f = F.sigmoid
 #f = F.tanh
@@ -68,16 +69,13 @@ class Net(nn.Module):
     def __init__(self, lr=.04):
         super(Net, self).__init__()
 
-        num_coin_pickups = 10+5+1 # 5 choose 3 + 5 + 1gold
         gst_size = 6+52+4
         cst_size = 6+6+1
 
-        #hg_sizes = [400, 300, 300]
-        #hc_sizes = [200, 150, 100]
         hg_sizes = [900,800,600]
         hc_sizes = [200, 120]
 
-        # Game state subnet
+        ' Game state subnet '
         self.hg = []
         for i in range(len(hg_sizes)):
             if i == 0:
@@ -93,7 +91,7 @@ class Net(nn.Module):
         else:
             self.hg_seq = nn.Sequential(*self.hg)
 
-        # Card subnet
+        ' Card subnet '
         self.hc = []
         for i in range(len(hc_sizes)):
             if i == 0:
@@ -114,7 +112,7 @@ class Net(nn.Module):
         self.final_softmax = nn.Softmax()
 
         #self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.00001)
-        self.opt = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=.00005)
+        self.opt = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=.00002)
 
 
     ' The part to only run once '
@@ -136,55 +134,15 @@ class Net(nn.Module):
 
         gst_partial = self.gst_forward(gst)
 
-        #assert(len(csts) == 12)
-
-        # batch x 20
-        #card_reps = [self.cst_forward(gst_partial, cst).view(-1) for cst in csts]
-        #print('cr',card_reps[0].size())
-        #card_reps = [torch.cat([joined[i]]+[card_reps[i]]) for i in range(16)]
-
         ''' FOR VALUE '''
         ' Batch by 28 future states '
-        # gst_partial : 28 x 1000
+        # gst_partial : 28 x H
         cr = self.cst_forward(gst_partial, csts).view(28, -1)
 
-        #cr = torch.cat([gst_partial.expand([28,600,
         cr = torch.cat([gst_partial,cr],dim=1)
-        #cr[cr<0.00] = 0.000001
 
         scores = self.final_scoring(cr)
         scores= torch.clamp(scores, .000000001,100)
-
-
-        ''' FOR SOFTMAX OVER ACTIONS
-        cr = self.cst_forward(gst_partial, csts).view(28, -1)
-        print('gstp',gst_partial.size())
-        print('cr',cr.size())
-        jo = torch.cat([gst_partial,cr], dim=1)
-        print('jo',jo.size())
-
-        scores = self.final_scoring(jo)
-        print('scores_scorefinal',scores.size())
-        scores = self.final_softmax(scores)
-        print('scores_scoresoft',scores.size())
-        '''
-
-        '''
-        ' Batched by many gsts'
-        cr = self.cst_forward(gst_partial, csts).view(gst_partial.size()[0],-1)
-        jo = torch.cat([gst_partial,cr], dim=1)
-
-        scores = self.final_softmax(jo)
-        '''
-
-        #scores = F.relu(self.final_scoring(jo))
-        #scores = f(self.final_scoring(jo))
-        #scores[scores<0] = 0.00000001
-        #scores = torch.clamp(scores, 0.000000001, 10000)
+        #scores = 
 
         return scores
-
-
-#test_gst,test_cst = np.random.random(54),[np.random.random(12) for _ in range(6)]
-#tgst,tcsts = ag.Variable(torch.Tensor(test_gst)),[ag.Variable(torch.Tensor(arr)) for arr in test_cst]
-

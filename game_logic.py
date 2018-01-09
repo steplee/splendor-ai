@@ -10,22 +10,6 @@ from util import COIN_PICKUPS, one_hot, \
 
 
 
-optp = optparse.OptionParser()
-optp.add_option('--name', default=str(time.time()).split('.')[0])
-optp.add_option('--update_losers', action="store_true")
-optp.add_option('--policy_gradients', action="store_true")
-optp.add_option('--batch_players', action="store_true")
-optp.add_option('--load_model', action="store_true")
-optp.add_option('--lr', default=.04, type='float')
-opts = optp.parse_args(sys.argv)[0]
-
-if opts.policy_gradients:
-    from players import PolicyGradientPlayer as Player
-    from models import PolicyGradientModel as Model
-else:
-    from players import ValueIterationPlayer as Player
-    from models import ValueIterationModel as Model
-
 
 
 ''' - -  -  -  -  -  -  GAME  -  -  -  -  -  -  -  -  -  -  '''
