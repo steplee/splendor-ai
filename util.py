@@ -23,7 +23,7 @@ def one_neg(i,size=5):
 
 ''' - -  -  -  -  -  -  RECORD  -  -  -  -  -  -  -  -  -  -  '''
 
-Record = namedtuple('record', ['prev','state','values_var','act_id','model','status','pid'])
+Record = namedtuple('record', ['prev','state','values_var','act_id','actor','status','pid'])
 
 
 

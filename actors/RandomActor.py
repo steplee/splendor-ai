@@ -22,6 +22,7 @@ Random Actor. that's right, it acts randomly.
 
 class RandomActor(BaseActor):
     def __init__(self, use_model=None):
+        self.name = "RandomActor"
         pass
 
     def act(self, record, training=True):

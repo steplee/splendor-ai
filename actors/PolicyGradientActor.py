@@ -25,6 +25,7 @@ TODO: implement experience replay
 
 class PolicyGradientActor(BaseActor):
     def __init__(self, use_model=None, **model_params):
+        self.name = "PolicyGradientActor"
 
         if type(use_model) == type:
             self.model = use_model(*model_params)
@@ -36,7 +37,7 @@ class PolicyGradientActor(BaseActor):
     ' todo: implement experience replay '
     ' Return (status,record)'
     def act(self, record, training=True):
-        next_state,values_var,action_id = self.sample_action_with_model(record.state, model,training)
+        next_state,values_var,action_id = self.sample_action_with_model(record.state, training)
 
         if type(values_var) == type(None) and action_id == -1:
             return ('fail',-1), None
@@ -49,8 +50,8 @@ class PolicyGradientActor(BaseActor):
 
         if np.random.random()>.999 and type(values_var)!=type(None):
             #print('game_state',next_state.arr)
-            print('weights norm',sum(torch.norm(p) for p in self.model.parameters()).data.numpy()[0])
-            print('action values',values_var.data.numpy()[:,0])
+            print('pg weights norm',sum(torch.norm(p) for p in self.model.parameters()).data.numpy()[0])
+            print('pg scores',values_var.data.numpy()[0])
 
         if stat[0] == 'won':
             return stat, rec
@@ -62,20 +63,19 @@ class PolicyGradientActor(BaseActor):
 
     ' return <next_state, values_var, act_id> '
     def sample_action_with_model(self, gstate, training=True):
-        # Gather future 1-step states
         future_games = gstate.simulate_all_actions(gstate.active_player)
         if all( (fg == None for fg in future_games) ):
-            print("all bad")
-            return gstate, None, -1 # return old state
-
-        # TODO only compute what works, need to un-hardcode 28x batching in the model code
+            print("pg all bad")
+            return gstate, None, -1
 
         # Evaluate a distribution over actions.
-        values = self.model(gstate.get_game_features, gstate.get_card_features())
+        fst =  [gstate.get_game_features()]
+        csts = [gstate.get_card_features_as_2d()]
+        values = self.model(fst,csts)
 
         # sample from it
         good_choices = [i for (i,fgame) in enumerate(future_games) if fgame != None]
-        probs = np.copy(values.data.numpy()[:,0])
+        probs = np.copy(values.data.numpy()[0])
 
         if training:
             probs = probs[good_choices]
@@ -120,7 +120,7 @@ class PolicyGradientActor(BaseActor):
                     if type(record.values_var) != type(None):
                         if record.actor == self:
                             value_vars.append(record.values_var)
-                            selected_acts.append(record.act_id)
+                            selected_acts.append(int(record.act_id))
                             weights.append(1.0 if record.state.active_player == winner else -.33)
                             pids.append(record.pid)
                     record = record.prev
@@ -134,23 +134,18 @@ class PolicyGradientActor(BaseActor):
                 '''
 
                 # XEnt loss
-                #targets = ag.Variable(torch.LongTensor(acts), requires_grad=False)
-                #loss = torch.nn.functional(value_vars, targets, reduce=False)
-                ## If we lose the game use the *negative of xent* as objective.
-                #weights = ag.Variable(torch.FloatTensor(weights), requires_grad=False)
-                #loss = torch.average(loss * weights)
+                weights = ag.Variable(torch.FloatTensor(weights), requires_grad=False)
+                scores = torch.cat(value_vars)
+                targets = ag.Variable(torch.LongTensor(selected_acts), requires_grad=False)
 
+                local_loss = torch.nn.functional.cross_entropy(scores, targets, reduce=False)
+                local_loss = torch.sum(local_loss * weights)
 
-
-                # L2 Loss
-                #selected_acts_ids = torch.LongTensor(selected_acts)
-                selected_acts_v = torch.cat([vv[sa] for (vv,sa) in zip(value_vars,selected_acts)])
-                targets = [30.0 if winner==pid else 0.01 for pid in pids]
-                targets = ag.Variable(torch.FloatTensor(targets), requires_grad=False)
                 if loss is None:
-                    loss = torch.nn.functional.mse_loss(selected_acts_v, targets, reduce=True)
+                    loss = local_loss
                 else:
-                    loss += torch.nn.functional.mse_loss(selected_acts_v, targets, reduce=True)
+                    loss += local_loss
+
 
 
             loss.backward()

@@ -25,6 +25,7 @@ I should also implement experience replay and see how it effects performance.
 
 class ValueIterationActor(BaseActor):
     def __init__(self, use_model=None, **model_params):
+        self.name = "ValueIterationActor"
 
         if type(use_model) == type:
             self.model = use_model(*model_params)
@@ -54,8 +55,8 @@ class ValueIterationActor(BaseActor):
 
         if np.random.random()>.999 and type(values_var)!=type(None):
             #print('game_state',next_state.arr)
-            print('weights norm',sum(torch.norm(p) for p in self.model.parameters()).data.numpy()[0])
-            print('action values',values_var.data.numpy()[:,0])
+            print('vi.cross_entropy weights norm',sum(torch.norm(p) for p in self.model.parameters()).data.numpy()[0])
+            print('vi action values',values_var.data.numpy()[:,0])
 
         if stat[0] == 'won':
             return stat, rec
@@ -69,34 +70,29 @@ class ValueIterationActor(BaseActor):
     def sample_action_with_model(self, gstate, training=True):
         # Gather future 1-step states
         future_games = gstate.simulate_all_actions(gstate.active_player)
-        if all( (fg == None for fg in future_games) ):
+        future_games = [fg for fg in future_games if fg != None]
+
+        ' Make sure we have atleast one good action '
+        if len(future_games) == 0:
             print("all bad")
             return gstate, None, -1 # return old state
 
-        # TODO only compute what works, need to un-hardcode 28x batching in the model code
-
-        gsts = [fg.get_game_features() if fg != None else np.zeros(62) for fg in future_games]
-        csts = [fg.get_card_features_as_2d() if fg != None else np.zeros([12,13]) for fg in future_games]
+        gsts = [fg.get_game_features() for fg in future_games]
+        csts = [fg.get_card_features_as_2d() for fg in future_games]
         fsts,gsts = np.array(gsts), np.array(csts)
 
         # Evaluate future states with the Value Function.
         values = self.model(fsts, gsts)
 
         # sample from it
-        good_choices = [i for (i,fgame) in enumerate(future_games) if fgame != None]
         probs = np.copy(values.data.numpy()[:,0])
 
         ' If training, sample wrt probs. If testing, select max '
         if training:
-            probs = probs[good_choices]
             probs = probs / sum(probs)
-            act_id = np.random.choice(good_choices, p=probs)
+            act_id = np.random.choice(range(len(probs)), p=probs)
         else:
-            good_choices = set(good_choices) # todo optimize...
             act_id = probs.argmax()
-            while act_id not in good_choices:
-                probs[act_id] = -.01
-                act_id = probs.argmax()
 
 
         return future_games[act_id], values, act_id
@@ -118,7 +114,6 @@ class ValueIterationActor(BaseActor):
                 ' These all run in reverse, we are following the linked list backward '
                 value_vars = []
                 selected_acts = []
-                weights = []
                 pids = []
 
                 while record != None and record.prev:
@@ -129,7 +124,6 @@ class ValueIterationActor(BaseActor):
                         if record.actor == self:
                             value_vars.append(record.values_var)
                             selected_acts.append(record.act_id)
-                            weights.append(1.0 if record.state.active_player == winner else -.33)
                             pids.append(record.pid)
                     record = record.prev
 
@@ -153,7 +147,7 @@ class ValueIterationActor(BaseActor):
                 # L2 Loss
                 #selected_acts_ids = torch.LongTensor(selected_acts)
                 selected_acts_v = torch.cat([vv[sa] for (vv,sa) in zip(value_vars,selected_acts)])
-                targets = [10.0 if winner==pid else 0.01 for pid in pids]
+                targets = [22.0 if winner==pid else 0.01 for pid in pids]
                 targets = ag.Variable(torch.FloatTensor(targets), requires_grad=False)
                 if loss is None:
                     loss = torch.nn.functional.mse_loss(selected_acts_v, targets, reduce=True)
@@ -162,7 +156,7 @@ class ValueIterationActor(BaseActor):
 
 
             loss.backward()
-            print("stepping with loss:",loss.data[0])
+            print("VI stepping with loss:",loss.data[0])
             self.model.opt.step()
             self.model.zero_grad()
 

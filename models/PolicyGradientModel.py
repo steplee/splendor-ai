@@ -72,8 +72,8 @@ class Net(nn.Module):
         gst_size = 6+52+4
         cst_size = 6+6+1
 
-        hg_sizes = [900,800,600]
-        hc_sizes = [200, 120]
+        hg_sizes = [1500,800,800]
+        hc_sizes = [300, 120]
 
         ' Game state subnet '
         self.hg = []
@@ -108,7 +108,8 @@ class Net(nn.Module):
             self.hc_seq = nn.Sequential(*self.hc)
         
         ' We will concatenate the game_state activations and all 12 card_states '
-        self.final_scoring = nn.Linear(self.hg_seq[-2].out_features + 12*self.hc[-2].out_features, 1)
+        self.final_scoring = nn.Linear(self.hg_seq[-2].out_features + 12*self.hc[-2].out_features, 28)
+        self.final_softmax = nn.Softmax()
 
         if opt_method == 'sgd':
             self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.00002)
@@ -135,15 +136,12 @@ class Net(nn.Module):
 
         gst_partial = self.gst_forward(gst)
 
-        ''' FOR VALUE '''
-        ' Batch by 28 future states '
-        # gst_partial : 28 x H
         cr = self.cst_forward(gst_partial, csts).view(-1, self.hc[-2].out_features*12)
 
         cr = torch.cat([gst_partial,cr],dim=1)
 
         scores = self.final_scoring(cr)
-        scores= torch.clamp(scores, .000000001,100)
-        #scores = 
+        scores = self.final_softmax(scores)
 
         return scores
+

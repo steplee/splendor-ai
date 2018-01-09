@@ -1,11 +1,17 @@
 from util import Record, Actions
 
 from actors import ValueIterationActor
+from actors import RandomActor
+from actors import PolicyGradientActor
+
 from models import ValueIterationModel
+from models import PolicyGradientModel
 
 from game_logic import GameState
 
 import os,sys,time,optparse
+import numpy as np
+import random
 
 import torch
 
@@ -24,33 +30,44 @@ opts = optp.parse_args(sys.argv)[0]
 
 
 def play_some_games(n=5000):
-    via = ValueIterationActor.ValueIterationActor()
+    if opts.load_model:
+        pass # TODO
+    else:
+        opt_method = 'sgd' if opts.sgd else 'adam'
+        vi_model = ValueIterationModel.Net(lr=opts.lr, opt_method='sgd')
+        pg_model = PolicyGradientModel.Net(lr=opts.lr, opt_method='sgd')
+
+
+    via = ValueIterationActor.ValueIterationActor(use_model=vi_model)
+    ra = RandomActor.RandomActor()
+    pga = PolicyGradientActor.PolicyGradientActor(use_model=pg_model)
+
+    all_save_dict = {'vi_dict': vi_model.state_dict, 'pg_dict': pg_model.state_dict}
+
+    ' These are called `act(record)` upon '
+    actors = [via, ra, pga, ra]
+    actor_map = {a:0 for a in actors}
+
+
     save_path = os.path.join('saved_models',opts.name)
     log_path = os.path.join('logs',opts.name)
 
     with open(log_path,'w') as logf:
-        if opts.load_model:
-            pass # TODO
-        else:
-            opt_method = 'sgd' if opts.sgd else 'adam'
-            model = ValueIterationModel.Net(lr=opts.lr, opt_method='sgd')
 
         for game_num in range(n):
+            ' Permute players so that models generalize '
+            random.shuffle(actors)
+
             genesis_state = GameState()
-            genesis_record = Record(None,GameState(),None,None,model,'genesis',-1)
+            genesis_record = Record(None,GameState(),None,None,None,'genesis',-1)
             record = genesis_record
             stat = ('ongoing',-1)
             turns = 0
             #print("Start game",i)
 
             while stat[0] == 'ongoing':
-                stat,record = via.act(record, model)
+                stat,record = actors[record.state.active_player].act(record)
                 turns += 1
-
-                if turns%4==0 and turns>0:
-                    pass
-                    #print("(turn",str(turns//4)+")")
-                    #time.sleep(3)
 
                 if stat[0] == 'fail':
                     print("Game",game_num,"failed!, doing nothing")
@@ -61,36 +78,47 @@ def play_some_games(n=5000):
                     print("Game",game_num,"was a draw, doing nothing",file=logf)
                 elif stat[0] == 'won':
                     if game_num % 5 == 0:
-                        print("Player {} won game {} on round {}".format(record.status,game_num,turns//4))
-                        print("Player {} won game {} on round {}".format(record.status,game_num,turns//4),file=logf)
-                    via.apply_reward(record)
+                        print("Player {} won game {} on round {}".format(actors[stat[1]].name,game_num,turns//4))
+                        print("Player {} won game {} on round {}".format(actors[stat[1]].name,game_num,turns//4),file=logf)
+
+                    for actor in actor_map.keys():
+                        actor.apply_reward(record)
 
             if game_num % opts.save_every == 0 and game_num>0:
                 print("\nsaving to", save_path)
-                torch.save({'opts': opts,'game_num':game_num, 'state_dict':model.state_dict} , save_path)
+                torch.save({'opts': opts,'game_num':game_num, **all_save_dict} , save_path)
+
+
+
+            ' Testing code '
 
             if game_num % opts.test_every == 0 and game_num>0:
                 print("\nTesting:")
                 turn_cnt = []
-                for test_num in range(6):
+                for test_num in range(5):
                     genesis_state = GameState()
-                    genesis_record = Record(None,GameState(),None,None,model,'genesis',-1)
+                    genesis_record = Record(None,GameState(),None,None,None,'genesis',-1)
                     record = genesis_record
                     stat = ('ongoing',-1)
                     test_turns = 0
                     while stat[0] == 'ongoing':
-                        stat,record = via.act(record, model, training=False)
+                        stat,record = actors[record.state.active_player].act(record)
 
                         if stat[0] == 'fail' or stat[0] == 'draw':
                             pass
                         elif stat[0] == 'won':
+                            actor_map[actors[record.state.active_player]] += 1
                             turn_cnt.append(test_turns//4)
                         test_turns += 1
-                print("Average turns over %d tests:"%len(turn_cnt),sum(turn_cnt)/len(turn_cnt),'\n')
-                print("Average turns over %d tests:"%len(turn_cnt),sum(turn_cnt)/len(turn_cnt),'\n',file=logf)
+                print("Average turns over %d tests:"%len(turn_cnt),sum(turn_cnt)/len(turn_cnt))
+                print("Average turns over %d tests:"%len(turn_cnt),sum(turn_cnt)/len(turn_cnt),file=logf)
+                print("Running player test win count,", [(a.name,w) for (a,w) in actor_map.items()])
+                print("Running player test win count,", [(a.name,w) for (a,w) in actor_map.items()],file=logf)
+                print("Running player test win freqs,", [(a.name,w/sum(actor_map.values())) for (a,w) in actor_map.items()],'\n')
+                print("Running player test win freqs,", [(a.name,w/sum(actor_map.values())) for (a,w) in actor_map.items()],'\n',file=logf)
                 logf.flush()
 
 
 
 if __name__=='__main__' and 'train' in sys.argv:
-    play_some_games(10000)
+    play_some_games(30000)
