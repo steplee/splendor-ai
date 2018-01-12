@@ -156,6 +156,7 @@ class GameState(object):
     def get_player_cards(self,p): return self.arr[6+p*13+6:6+p*13+12]
     def get_player_points(self,p): return self.arr[6+p*13+12]
     def increase_player_points(self,p,delta): self.arr[6+p*13+12] += 1
+    def get_player_whole(self,p): return self.arr[6+p*13:6+p*13+13]
 
     def get_game_features(self): return self.arr
     def get_card_features_as_2d(self): return np.reshape(self.card_arr,[12,13])

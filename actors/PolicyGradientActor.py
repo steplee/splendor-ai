@@ -42,8 +42,8 @@ class PolicyGradientActor(BaseActor):
         if type(values_var) == type(None) and action_id == -1:
             return ('fail',-1), None
 
-        if not next_state.verify_game_valid():
-            print("Invalid game")
+        #if not next_state.verify_game_valid():
+            #print("Invalid game")
 
         stat = next_state.game_status()
         rec = Record(record,next_state,values_var,action_id,self,stat,record.state.active_player)
@@ -77,16 +77,16 @@ class PolicyGradientActor(BaseActor):
         good_choices = [i for (i,fgame) in enumerate(future_games) if fgame != None]
         probs = np.copy(values.data.numpy()[0])
 
-        if training:
-            probs = probs[good_choices]
-            probs = probs / sum(probs)
-            act_id = np.random.choice(good_choices, p=probs)
-        else:
+        if (not training) or np.random.random() > .9:
             good_choices = set(good_choices) # todo optimize...
             act_id = probs.argmax()
             while act_id not in good_choices:
                 probs[act_id] = -.01
                 act_id = probs.argmax()
+        else:
+            probs = probs[good_choices]
+            probs = probs / sum(probs)
+            act_id = np.random.choice(good_choices, p=probs)
 
         # Save our pytorch Variable, action taken, and model used
         #self.history.append((values, act_id, model))
@@ -99,13 +99,12 @@ class PolicyGradientActor(BaseActor):
         if len(self.final_states_not_applied) < 10:
             self.final_states_not_applied.append(final_record)
         else:
-            winner = final_record.status[1]
-            assert(type(winner) == int and winner>= 0 and winner < 4)
-
+            self.final_states_not_applied.append(final_record)
 
             loss = None
 
             for record in self.final_states_not_applied:
+                winner = record.status[1]
 
                 ' These all run in reverse, we are following the linked list backward '
                 value_vars = []

@@ -47,8 +47,8 @@ class ValueIterationActor(BaseActor):
         if type(values_var) == type(None) and action_id == -1:
             return ('fail',-1), None
 
-        if not next_state.verify_game_valid():
-            print("Invalid game")
+        #if not next_state.verify_game_valid():
+            #print("Invalid game")
 
         stat = next_state.game_status()
         rec = Record(record,next_state,values_var,action_id,self,stat,record.state.active_player)
@@ -74,7 +74,7 @@ class ValueIterationActor(BaseActor):
 
         ' Make sure we have atleast one good action '
         if len(future_games) == 0:
-            print("all bad")
+            print("vi all bad")
             return gstate, None, -1 # return old state
 
         gsts = [fg.get_game_features() for fg in future_games]
@@ -88,11 +88,12 @@ class ValueIterationActor(BaseActor):
         probs = np.copy(values.data.numpy()[:,0])
 
         ' If training, sample wrt probs. If testing, select max '
-        if training:
+        if (not training):
+            act_id = probs.argmax()
+            #print(gstate.get_player_whole(0),'->',future_games[act_id].get_player_whole(1))
+        else:
             probs = probs / sum(probs)
             act_id = np.random.choice(range(len(probs)), p=probs)
-        else:
-            act_id = probs.argmax()
 
 
         return future_games[act_id], values, act_id
@@ -100,16 +101,15 @@ class ValueIterationActor(BaseActor):
 
 
     def apply_reward(self, final_record):
-        if len(self.final_states_not_applied) < 10:
+        if len(self.final_states_not_applied) < 1:
             self.final_states_not_applied.append(final_record)
         else:
-            winner = final_record.status[1]
-            assert(type(winner) == int and winner>= 0 and winner < 4)
-
+            self.final_states_not_applied.append(final_record)
 
             loss = None
 
             for record in self.final_states_not_applied:
+                winner = record.status[1]
 
                 ' These all run in reverse, we are following the linked list backward '
                 value_vars = []
@@ -130,33 +130,22 @@ class ValueIterationActor(BaseActor):
                 if len(value_vars) == 0 or len(selected_acts) == 0:
                     continue
 
-                '''
-                2 approaches for loss:
-                  1. Some distance loss to wanted value function ✔
-                  2. Softmax + xent
-                '''
-
-                # XEnt loss
-                #targets = ag.Variable(torch.LongTensor(acts), requires_grad=False)
-                #loss = torch.nn.functional(value_vars, targets, reduce=False)
-                ## If we lose the game use the *negative of xent* as objective.
-                #weights = ag.Variable(torch.FloatTensor(weights), requires_grad=False)
-                #loss = torch.average(loss * weights)
-
 
                 # L2 Loss
                 #selected_acts_ids = torch.LongTensor(selected_acts)
                 selected_acts_v = torch.cat([vv[sa] for (vv,sa) in zip(value_vars,selected_acts)])
-                targets = [22.0 if winner==pid else 0.01 for pid in pids]
+                targets = [10.0 if winner==pid else 1 for pid in pids]
                 targets = ag.Variable(torch.FloatTensor(targets), requires_grad=False)
+                weight = +1.0 if winner==pids[0] else .7
                 if loss is None:
-                    loss = torch.nn.functional.mse_loss(selected_acts_v, targets, reduce=True)
-                else:
-                    loss += torch.nn.functional.mse_loss(selected_acts_v, targets, reduce=True)
+                    loss = torch.nn.functional.l1_loss(selected_acts_v, targets, reduce=True) * weight
+                else: 
+                    loss += torch.nn.functional.l1_loss(selected_acts_v, targets, reduce=True) * weight
 
 
             loss.backward()
             print("VI stepping with loss:",loss.data[0])
+            loss = None
             self.model.opt.step()
             self.model.zero_grad()
 

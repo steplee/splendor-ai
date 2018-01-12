@@ -40,7 +40,7 @@ use_dropout = False
 f,ff = F.leaky_relu, torch.nn.LeakyReLU
 #f,ff = F.sigmoid, torch.nn.Sigmoid
 #f = F.sigmoid
-#f = F.tanh
+#f,ff = F.tanh, torch.nn.Tanh
 
 '''
 Architecture:
@@ -72,8 +72,8 @@ class Net(nn.Module):
         gst_size = 6+52+4
         cst_size = 6+6+1
 
-        hg_sizes = [900,800,600]
-        hc_sizes = [200, 120]
+        hg_sizes = [500,200,200]
+        hc_sizes = [20]
 
         ' Game state subnet '
         self.hg = []
@@ -111,7 +111,8 @@ class Net(nn.Module):
         self.final_scoring = nn.Linear(self.hg_seq[-2].out_features + 12*self.hc[-2].out_features, 1)
 
         if opt_method == 'sgd':
-            self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.00002)
+            #self.opt = torch.optim.SGD(self.parameters(), lr=lr, weight_decay=.00002)
+            self.opt = torch.optim.SGD(self.parameters(), lr=lr)
         else:
             self.opt = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=.00002)
 
@@ -123,7 +124,7 @@ class Net(nn.Module):
         return net
 
     ' Run 12 times, return hidden rep '
-    def cst_forward(self, gst_partial, cst):
+    def cst_forward(self, cst):
         net = self.hc_seq(cst)
         return net
 
@@ -138,7 +139,7 @@ class Net(nn.Module):
         ''' FOR VALUE '''
         ' Batch by 28 future states '
         # gst_partial : 28 x H
-        cr = self.cst_forward(gst_partial, csts).view(-1, self.hc[-2].out_features*12)
+        cr = self.cst_forward(csts).view(-1, self.hc[-2].out_features*12)
 
         cr = torch.cat([gst_partial,cr],dim=1)
 

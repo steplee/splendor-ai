@@ -21,9 +21,10 @@ optp = optparse.OptionParser()
 optp.add_option('--name', default=str(time.time()).split('.')[0])
 optp.add_option('--policy_gradients', action="store_true")
 optp.add_option('--load_model', action="store_true")
-optp.add_option('--lr', default=.04, type='float')
-optp.add_option('--save_every', default=400, type='float')
-optp.add_option('--test_every', default=100, type='float')
+optp.add_option('--pg_lr', default=.04, type='float') # policy gradient lr
+optp.add_option('--vi_lr', default=.04, type='float') # value iteration lr
+optp.add_option('--save_every', default=800, type='float')
+optp.add_option('--test_every', default=200, type='float')
 optp.add_option('--sgd', action='store_true') # Use sgd instead of adam
 opts = optp.parse_args(sys.argv)[0]
 
@@ -34,8 +35,8 @@ def play_some_games(n=5000):
         pass # TODO
     else:
         opt_method = 'sgd' if opts.sgd else 'adam'
-        vi_model = ValueIterationModel.Net(lr=opts.lr, opt_method='sgd')
-        pg_model = PolicyGradientModel.Net(lr=opts.lr, opt_method='sgd')
+        vi_model = ValueIterationModel.Net(lr=opts.vi_lr, opt_method=opt_method)
+        pg_model = PolicyGradientModel.Net(lr=opts.pg_lr, opt_method=opt_method)
 
 
     via = ValueIterationActor.ValueIterationActor(use_model=vi_model)
@@ -45,7 +46,7 @@ def play_some_games(n=5000):
     all_save_dict = {'vi_dict': vi_model.state_dict, 'pg_dict': pg_model.state_dict}
 
     ' These are called `act(record)` upon '
-    actors = [via, ra, pga, ra]
+    actors = [via, ra, ra, ra]
     actor_map = {a:0 for a in actors}
 
 
@@ -56,7 +57,7 @@ def play_some_games(n=5000):
 
         for game_num in range(n):
             ' Permute players so that models generalize '
-            random.shuffle(actors)
+            #random.shuffle(actors)
 
             genesis_state = GameState()
             genesis_record = Record(None,GameState(),None,None,None,'genesis',-1)
@@ -66,7 +67,7 @@ def play_some_games(n=5000):
             #print("Start game",i)
 
             while stat[0] == 'ongoing':
-                stat,record = actors[record.state.active_player].act(record)
+                stat,record = actors[record.state.active_player].act(record,training=True)
                 turns += 1
 
                 if stat[0] == 'fail':
@@ -102,7 +103,7 @@ def play_some_games(n=5000):
                     stat = ('ongoing',-1)
                     test_turns = 0
                     while stat[0] == 'ongoing':
-                        stat,record = actors[record.state.active_player].act(record)
+                        stat,record = actors[record.state.active_player].act(record,training=False)
 
                         if stat[0] == 'fail' or stat[0] == 'draw':
                             pass
@@ -121,4 +122,4 @@ def play_some_games(n=5000):
 
 
 if __name__=='__main__' and 'train' in sys.argv:
-    play_some_games(30000)
+    play_some_games(70000)
