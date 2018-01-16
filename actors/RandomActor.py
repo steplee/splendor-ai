@@ -55,13 +55,15 @@ class RandomActor(BaseActor):
     def sample_action_with_model(self, gstate, training=True):
         # Gather future 1-step states
         future_games = gstate.simulate_all_actions(gstate.active_player)
-        if all( (fg == None for fg in future_games) ):
-            print("all bad")
-            return gstate, None, -1 # return old state
-
+        future_games = [fg[1] for fg in future_games if fg[0] == True]
 
         # sample a state to go to
-        good_choices = [i for (i,fgame) in enumerate(future_games) if fgame != None]
+        good_choices = [i for (i,fgame) in enumerate(future_games)]
+
+        if len(good_choices) == 0:
+            print("Random all bad")
+            return gstate, None, -1 # return old state
+
         act_id = np.random.choice(good_choices)
 
         return future_games[act_id], None, act_id

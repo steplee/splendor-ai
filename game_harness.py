@@ -36,17 +36,19 @@ def play_some_games(n=5000):
     else:
         opt_method = 'sgd' if opts.sgd else 'adam'
         vi_model = ValueIterationModel.Net(lr=opts.vi_lr, opt_method=opt_method)
+        vi2_model = ValueIterationModel.Net(lr=opts.vi_lr, opt_method=opt_method)
         pg_model = PolicyGradientModel.Net(lr=opts.pg_lr, opt_method=opt_method)
 
 
     via = ValueIterationActor.ValueIterationActor(use_model=vi_model)
+    via2 = ValueIterationActor.ValueIterationActor(use_model=vi2_model)
     ra = RandomActor.RandomActor()
     pga = PolicyGradientActor.PolicyGradientActor(use_model=pg_model)
 
     all_save_dict = {'vi_dict': vi_model.state_dict, 'pg_dict': pg_model.state_dict}
 
     ' These are called `act(record)` upon '
-    actors = [via, ra, ra, ra]
+    actors = [via, via2, pga, ra]
     actor_map = {a:0 for a in actors}
 
 
@@ -103,7 +105,8 @@ def play_some_games(n=5000):
                     stat = ('ongoing',-1)
                     test_turns = 0
                     while stat[0] == 'ongoing':
-                        stat,record = actors[record.state.active_player].act(record,training=False)
+                        #stat,record = actors[record.state.active_player].act(record,training=False)
+                        stat,record = actors[record.state.active_player].act(record,training=True)
 
                         if stat[0] == 'fail' or stat[0] == 'draw':
                             pass

@@ -62,8 +62,10 @@ class GameState(object):
         else:
             self.noops_in_row = 0
 
+
+        good = True
         if not self.action_is_valid_for_game(pid,action):
-            return None
+            good = False
 
         if action.type == 'card':
             bank = self.get_bank()
@@ -101,7 +103,7 @@ class GameState(object):
             self.get_bank()[-1] -= 1
         self.active_player = (self.active_player + 1) % 4
         
-        return self
+        return (good, self)
 
     def simulate_all_actions(self, pid):
         # TODO a micro-optizmization is in order: no need to copy if action invalid.
@@ -132,7 +134,7 @@ class GameState(object):
         return np.concatenate([one_hot(resource,size=6),cost,[pts]])
 
     def game_status(self):
-        winners = [pid for pid in range(self.num_players) if self.get_player_points(pid)>=15]
+        winners = [pid for pid in range(self.num_players) if self.get_player_points(pid)>=12]
         if len(winners) > 0:
             return ('won', winners[0])
         elif self.noops_in_row > 4:

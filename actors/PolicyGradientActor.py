@@ -37,7 +37,7 @@ class PolicyGradientActor(BaseActor):
     ' todo: implement experience replay '
     ' Return (status,record)'
     def act(self, record, training=True):
-        next_state,values_var,action_id = self.sample_action_with_model(record.state, training)
+        next_state,values_var,action_id, acts = self.sample_action_with_model(record.state, training)
 
         if type(values_var) == type(None) and action_id == -1:
             return ('fail',-1), None
@@ -48,10 +48,12 @@ class PolicyGradientActor(BaseActor):
         stat = next_state.game_status()
         rec = Record(record,next_state,values_var,action_id,self,stat,record.state.active_player)
 
-        if np.random.random()>.999 and type(values_var)!=type(None):
+        if np.random.random()>.998 and type(values_var)!=type(None):
             #print('game_state',next_state.arr)
             print('pg weights norm',sum(torch.norm(p) for p in self.model.parameters()).data.numpy()[0])
-            print('pg scores',values_var.data.numpy()[0])
+            print('pg scores')
+            for i,v in zip(acts, values_var.data.numpy()[:,0]):
+                print(Actions[i],':',v)
 
         if stat[0] == 'won':
             return stat, rec
@@ -61,12 +63,12 @@ class PolicyGradientActor(BaseActor):
         return stat,rec
 
 
-    ' return <next_state, values_var, act_id> '
+    ' return <next_state, values_var, act_id, valid_action_ids> '
     def sample_action_with_model(self, gstate, training=True):
         future_games = gstate.simulate_all_actions(gstate.active_player)
-        if all( (fg == None for fg in future_games) ):
+        if all( (fg[0] == False for fg in future_games) ):
             print("pg all bad")
-            return gstate, None, -1
+            return gstate, None, -1, []
 
         # Evaluate a distribution over actions.
         fst =  [gstate.get_game_features()]
@@ -74,7 +76,7 @@ class PolicyGradientActor(BaseActor):
         values = self.model(fst,csts)
 
         # sample from it
-        good_choices = [i for (i,fgame) in enumerate(future_games) if fgame != None]
+        good_choices = [i for (i,fgame) in enumerate(future_games) if fgame[0] == True]
         probs = np.copy(values.data.numpy()[0])
 
         if (not training) or np.random.random() > .9:
@@ -91,12 +93,12 @@ class PolicyGradientActor(BaseActor):
         # Save our pytorch Variable, action taken, and model used
         #self.history.append((values, act_id, model))
 
-        return future_games[act_id], values, act_id
+        return future_games[act_id][1], values, act_id, good_choices
 
 
 
     def apply_reward(self, final_record):
-        if len(self.final_states_not_applied) < 10:
+        if len(self.final_states_not_applied) < 1:
             self.final_states_not_applied.append(final_record)
         else:
             self.final_states_not_applied.append(final_record)
@@ -141,9 +143,9 @@ class PolicyGradientActor(BaseActor):
                 local_loss = torch.sum(local_loss * weights)
 
                 if loss is None:
-                    loss = local_loss
+                    loss = local_loss * .01
                 else:
-                    loss += local_loss
+                    loss += local_loss * .01
 
 
 

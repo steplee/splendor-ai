@@ -72,8 +72,8 @@ class Net(nn.Module):
         gst_size = 6+52+4
         cst_size = 6+6+1
 
-        hg_sizes = [500,200,200]
-        hc_sizes = [20]
+        hg_sizes = [700,500,400]
+        hc_sizes = [200,100]
 
         ' Game state subnet '
         self.hg = []
